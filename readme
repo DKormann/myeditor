@@ -1,4 +1,4 @@
-This is a toy code editor still in development. (try it)[dkormann.github.io/myeditor]
+This is a toy code editor still in development. [try it](https://dkormann.github.io/myeditor)
 
 The main goal is to bring zig's comptime capabilities to a scripting language.
 
