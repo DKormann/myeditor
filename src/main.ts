@@ -40,7 +40,7 @@ body.style({
 
   span(" ⚙ about this", ()=>{
     Edit.setText(`
-// This is a toy code editor still in development.
+// This is a toy code editor still in development. [https://github.com/dkormann/myeditor]
 
 // The main goal is to bring zig's comptime capabilities to a scripting language.
 

@@ -1,0 +1,6 @@
+This is a toy code editor still in development. (try it) [dkormann.github.io/myeditor]
+
+The main goal is to bring zig's comptime capabilities to a scripting language.
+
+also if possible I want to make the code linter programmable in a very straightforward way.
+
