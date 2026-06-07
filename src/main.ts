@@ -1,5 +1,6 @@
 import { body, button, div, html, span } from "./html";
 import { editor } from "./editor";
+import { parse } from "./parser";
 
 
 (async ()=>{
@@ -19,9 +20,17 @@ let outview = html('pre')().style({
 
 
 let Edit = editor(s=> {
+    // try{
+    //   outview.el.textContent = eval(s)
+    // }catch(e){}
+
     try{
-      outview.el.textContent = eval(s)
-    }catch(e){}
+      let ast = parse(s)
+      outview.el.textContent = JSON.stringify(ast, null, 2)
+    }catch(e){
+      outview.el.textContent = e instanceof Error ? e.message : String(e)
+    }
+
   })
 
 body.style({
@@ -44,11 +53,8 @@ body.style({
 
 // The main goal is to bring zig's comptime capabilities to a scripting language.
 
-// also if possible I want to make the code linter programmable in a very straightforward way.
+// also if possible I want to make the linter programmable from the code in a straightforward way.
 
-// currently the editor might be able to run js code:
-
-22
 
 `)
   })

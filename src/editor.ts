@@ -5,20 +5,27 @@ type Pos = { col: number, row: number }
 
 export const editor = (oninput: (s:string)=>void) => {
 
-  let lines = localStorage.getItem("lines")?.split("\n") || [""]
+  let lines = localStorage.getItem("lines")?.split("\n") || ['','"hello world"', '']
   let cursor:Pos = {col:0, row:0}
   let el = html("pre")()
   .style({
     userSelect: "none",
   })
 
+
+  let hist : string[] = []
+
   let elements = new WeakMap<HTMLElement, Pos>()
   let setCursor = (pos:Pos) => {cursor = pos; render()}
 
   const render = () => {
     console.log("render")
-    localStorage.setItem("lines", lines.join("\n"))
-    oninput(lines.join("\n"))
+    let code = lines.join("\n")
+    if (hist[hist.length - 1] != code) {
+      localStorage.setItem("lines", code)
+      oninput(code)
+      hist.push(code)
+    }
 
     let scol = Math.min(cursor.col, lines[cursor.row].length)
 
@@ -41,7 +48,16 @@ export const editor = (oninput: (s:string)=>void) => {
   window.addEventListener("keydown", e=>{
     if (e.key.length === 1){
       if (e.metaKey){
-        if (e.key == "r") return 
+        if (e.key == "z"){
+          if (hist.length > 1){
+            hist.pop()
+            let last = hist[hist.length - 1]
+            hist.pop()
+            lines = last.split("\n")
+            setCursor({row:0, col:0})
+          }
+        }
+        return
       }
       lines[cursor.row] = lines[cursor.row].substring(0, cursor.col) + e.key + lines[cursor.row].substring(cursor.col)
       cursor.col++
@@ -108,7 +124,12 @@ export const editor = (oninput: (s:string)=>void) => {
       cursor.row++
       cursor.col = lines[cursor.row].match(/^\s*/)?.[0].length || 0
     }
-    e.preventDefault()
+
+
+    if (e.key.startsWith("Arrow")){
+
+      e.preventDefault()
+    }
 
     render()
 
