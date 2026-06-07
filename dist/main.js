@@ -47,7 +47,7 @@ var canvas = html("canvas");
 var button = html("button");
 
 // src/editor.ts
-var editor = (oninput) => {
+var editor = (oninput, lsp, getcolormap) => {
   let lines = localStorage.getItem("lines")?.split(`
 `) || ["", '"hello world"', ""];
   let cursor = { col: 0, row: 0 };
@@ -60,23 +60,40 @@ var editor = (oninput) => {
     cursor = pos;
     render();
   };
+  let colormap = [];
   const render = () => {
-    console.log("render");
     let code = lines.join(`
 `);
-    if (hist[hist.length - 1] != code) {
-      localStorage.setItem("lines", code);
-      oninput(code);
-      hist.push(code);
-    }
     let scol = Math.min(cursor.col, lines[cursor.row].length);
+    let chars = [];
+    let mkcolor = () => {
+      let cmapi = 0;
+      chars.forEach((c, i) => {
+        while (cmapi < colormap.length && colormap[cmapi].span.end.offset <= i)
+          cmapi++;
+        if (cmapi < colormap.length && colormap[cmapi].span.start.offset <= i && i < colormap[cmapi].span.end.offset) {
+          c.style.color = colormap[cmapi].color;
+        } else {
+          c.style.color = "";
+        }
+      });
+    };
     el.replaceChilren(...lines.map((line, row) => {
       let par = p(...line.split("").concat(" ").map((char, col) => {
         let chr = span(char, (e) => elements.set(chr.el, { row, col })).style(row == cursor.row && col == scol ? { backgroundColor: "white", color: "black" } : {});
+        chars.push(chr.el);
         return chr;
       }), (e) => elements.set(par.el, { row, col: line.length })).style({ margin: "0" });
       return par;
     }));
+    mkcolor();
+    if (hist[hist.length - 1] != code) {
+      localStorage.setItem("lines", code);
+      oninput(code);
+      hist.push(code);
+      colormap = getcolormap();
+      mkcolor();
+    }
   };
   window.addEventListener("keydown", (e) => {
     if (e.key.length === 1) {
@@ -453,6 +470,19 @@ class Parser {
   }
 }
 var parse = (code) => new Parser(tokenize(code)).parse();
+var children = (node) => {
+  if (node.$ === "function")
+    return [...node.content.vars, node.content.body];
+  if (node.$ === "app")
+    return [node.content.fn, ...node.content.args];
+  if (node.$ === "let")
+    return [node.content.value, node.content.body];
+  if (node.$ === "annot")
+    return [node.content.value, node.content.type];
+  if (node.$ === "record")
+    return node.content.map(([, value]) => value);
+  return [];
+};
 var stripSpans = (ast) => {
   if (ast.$ === "function")
     return { $: ast.$, content: { vars: ast.content.vars.map(stripSpans), body: stripSpans(ast.content.body) } };
@@ -530,13 +560,79 @@ var outview = html("pre")().style({
   borderTop: "1px solid white",
   paddingTop: "16px"
 });
+var ast;
+var colormap = [];
+var contains = (node, offset) => node.span.start.offset <= offset && offset < node.span.end.offset;
+var smallestAstAt = (node, offset) => {
+  if (!contains(node, offset))
+    return;
+  for (let child of children(node)) {
+    let match = smallestAstAt(child, offset);
+    if (match)
+      return match;
+  }
+  return node;
+};
+var colorOf = (node) => {
+  if (node.$ === "number")
+    return "#f5a623";
+  if (node.$ === "string")
+    return "#7ed321";
+  if (node.$ === "builtin")
+    return "#50e3c2";
+  if (node.$ === "var")
+    return "#4a90e2";
+  if (node.$ === "let")
+    return "#bd10e0";
+  if (node.$ === "function")
+    return "#d0021b";
+  return;
+};
+var prettyAST = (node) => {
+  switch (node.$) {
+    case "number":
+      return node.content.toString();
+    case "string":
+      return JSON.stringify(node.content);
+    case "builtin":
+      return node.content;
+    case "var":
+      return node.content.name;
+    case "let":
+      return `(let ${node.content.var} = ${prettyAST(node.content.value)} in ${prettyAST(node.content.body)})`;
+    case "function":
+      return `(fn (${node.content.vars.map((v) => v.content.name).join(", ")}) => ${prettyAST(node.content.body)})`;
+    case "app":
+      return `(${prettyAST(node.content.fn)} ${node.content.args.map(prettyAST).join(" ")})`;
+    case "annot":
+      return `(${prettyAST(node.content.value)} : ${prettyAST(node.content.type)})`;
+    case "record":
+      return `{${node.content.map(([k, v]) => `${k}: ${prettyAST(v)}`).join(", ")}}`;
+  }
+};
+var collectColormap = (node) => {
+  let kids = children(node);
+  if (kids.length > 0)
+    return kids.flatMap(collectColormap);
+  let color = colorOf(node);
+  return color ? [{ color, span: node.span }] : [];
+};
 var Edit = editor((s) => {
   try {
-    let ast = parse(s);
-    outview.el.textContent = JSON.stringify(ast, null, 2);
+    ast = parse(s);
+    colormap = collectColormap(ast).sort((a, b) => a.span.start.offset - b.span.start.offset);
+    outview.el.textContent = prettyAST(ast);
   } catch (e) {
+    ast = undefined;
+    colormap = [];
     outview.el.textContent = e instanceof Error ? e.message : String(e);
   }
+}, (offset) => {
+  if (!ast)
+    return;
+  return smallestAstAt(ast, offset);
+}, () => {
+  return colormap;
 });
 body.style({
   padding: "44px",

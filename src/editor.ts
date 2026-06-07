@@ -1,9 +1,10 @@
 import {div, html, p, span} from "./html"
+import { Span, type AST } from "./parser"
 
 type Pos = { col: number, row: number }
 
 
-export const editor = (oninput: (s:string)=>void) => {
+export const editor = (oninput: (s:string)=>void, lsp:(offset: number) => AST | undefined, getcolormap: () => {color:string, span: Span}[]) => {
 
   let lines = localStorage.getItem("lines")?.split("\n") || ['','"hello world"', '']
   let cursor:Pos = {col:0, row:0}
@@ -18,16 +19,27 @@ export const editor = (oninput: (s:string)=>void) => {
   let elements = new WeakMap<HTMLElement, Pos>()
   let setCursor = (pos:Pos) => {cursor = pos; render()}
 
-  const render = () => {
-    console.log("render")
-    let code = lines.join("\n")
-    if (hist[hist.length - 1] != code) {
-      localStorage.setItem("lines", code)
-      oninput(code)
-      hist.push(code)
-    }
+  let colormap : {color:string, span: Span}[] = []
 
+
+  const render = () => {
+    let code = lines.join("\n")
     let scol = Math.min(cursor.col, lines[cursor.row].length)
+
+    let chars: HTMLElement[] = []
+
+
+    let mkcolor = () => {
+      let cmapi = 0
+      chars.forEach((c, i)=>{
+        while(cmapi < colormap.length && colormap[cmapi].span.end.offset <= i) cmapi++
+        if (cmapi < colormap.length && colormap[cmapi].span.start.offset <= i && i < colormap[cmapi].span.end.offset){
+          c.style.color = colormap[cmapi].color
+        }else{
+          c.style.color = ""
+        }
+      })
+    }
 
     el.replaceChilren(...lines.map((line,row)=>{
       let par = p(
@@ -35,14 +47,26 @@ export const editor = (oninput: (s:string)=>void) => {
           (char,col)=>{
             let chr = span(char, (e)=> elements.set(chr.el, {row, col}) )
             .style((row == cursor.row && col == scol) ? {backgroundColor: "white", color: "black"} : {})
+            chars.push(chr.el)
             return chr
           }
         ),
         e=>elements.set(par.el, {row, col: line.length})
       ).style({margin: "0"})
       return par
+    }))
+
+    mkcolor()
+
+    if (hist[hist.length - 1] != code) {
+      localStorage.setItem("lines", code)
+      oninput(code)
+      hist.push(code)
+      colormap = getcolormap()
+      mkcolor()
     }
-  ))}
+
+  }
 
 
   window.addEventListener("keydown", e=>{
@@ -150,4 +174,3 @@ export const editor = (oninput: (s:string)=>void) => {
 
   
 }
-

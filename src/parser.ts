@@ -310,6 +310,15 @@ class Parser {
 
 export const parse = (code:string):AST => new Parser(tokenize(code)).parse()
 
+export const children = (node: AST): AST[] => {
+  if (node.$ === "function") return [...node.content.vars, node.content.body]
+  if (node.$ === "app") return [node.content.fn, ...node.content.args]
+  if (node.$ === "let") return [node.content.value, node.content.body]
+  if (node.$ === "annot") return [node.content.value, node.content.type]
+  if (node.$ === "record") return node.content.map(([, value]) => value)
+  return []
+}
+
 const stripSpans = (ast: AST): unknown => {
   if (ast.$ === "function") return {$: ast.$, content: {vars: ast.content.vars.map(stripSpans), body: stripSpans(ast.content.body)}}
   if (ast.$ === "app") return {$: ast.$, content: {fn: stripSpans(ast.content.fn), args: ast.content.args.map(stripSpans)}}
