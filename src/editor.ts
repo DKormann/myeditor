@@ -19,13 +19,13 @@ const colorOf = (node: AST | undefined): string => {
 
 export const editor = (oninput: (s:string)=>void, getAstMap : ()=> (AST|undefined)[], goToDef : (ast:AST) => void ) => {
 
-  let lines = localStorage.getItem("lines")?.split("\n") || `
+  let lines = localStorage.getItem("lines")?.split("\n") ?? `
 let x = 22 :: @number in
 let y = 33 :: @number in
 (@add x y)
 `.split("\n")
-  let cursor : Pos & {selection? : Pos} = {col:2, row:5, selection: {col: 0, row: 5}
-}
+  let cursor : Pos & {selection? : Pos} = {col:0, row:0};
+
   let el = html("pre")()
   .style({
     userSelect: "none",
