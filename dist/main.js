@@ -60,7 +60,7 @@ var colorOf = (node) => {
     return "#50e37c";
   return "#ffffff";
 };
-var editor = (oninput, getAstMap) => {
+var editor = (oninput, getAstMap, goToDef) => {
   let lines = localStorage.getItem("lines")?.split(`
 `) || `
 let x = 22 :: @number in
@@ -102,6 +102,7 @@ let y = 33 :: @number in
           c.style.color = color;
         else
           c.style.color = "";
+        elements.get(c).ast = ast;
       });
     };
     let range = selrange();
@@ -111,10 +112,10 @@ let y = 33 :: @number in
           boxShadow: "2px 0 0 0 white inset"
         } : {});
         chars.push(chr.el);
-        elements.set(chr.el, { row, col });
+        elements.set(chr.el, { pos: { row, col } });
         return chr;
       })).style({ margin: "0" });
-      elements.set(par.el, { row, col: line.length });
+      elements.set(par.el, { pos: { row, col: line.length } });
       return par;
     }));
     mkcolor();
@@ -254,9 +255,15 @@ let y = 33 :: @number in
   });
   let mousedown = false;
   window.addEventListener("mousedown", (e) => {
+    if (e.metaKey) {
+      let ast = elements.get(e.target)?.ast;
+      if (ast)
+        goToDef(ast);
+      return;
+    }
     mousedown = true;
     if (elements.has(e.target)) {
-      cursor = elements.get(e.target);
+      cursor = elements.get(e.target).pos;
       render();
     }
   });
@@ -264,20 +271,30 @@ let y = 33 :: @number in
     if (!mousedown)
       return;
     if (elements.has(e.target)) {
-      let pos = elements.get(e.target);
+      let pos = elements.get(e.target).pos;
       cursor.selection = cursor.selection || { row: cursor.row, col: cursor.col };
       cursor.row = pos.row;
       cursor.col = pos.col;
       render();
     }
   });
-  window.addEventListener("mouseup", (e) => mousedown = false);
+  window.addEventListener("mouseup", (e) => {
+    mousedown = false;
+  });
   render();
-  return { el, setText: (text) => {
-    lines = text.split(`
+  return {
+    el,
+    setText: (text) => {
+      lines = text.split(`
 `);
-    render();
-  } };
+      render();
+    },
+    setCursor: (pos) => {
+      console.log("setting cursor to", pos);
+      cursor = pos;
+      render();
+    }
+  };
 };
 
 // src/parser.ts
@@ -617,9 +634,7 @@ var test_parse = (code, expected) => {
     console.error("Expected:", stringify(stripSpans(expected)));
     console.error("Got:", stringify(stripSpans(ast)));
     throw new Error(`Test failed for code: ${code}`);
-  } else {
-    console.log("Test passed for code:", code);
-  }
+  } else {}
 };
 var test_span = (code, expected) => {
   let ast = parse(code);
@@ -628,9 +643,7 @@ var test_span = (code, expected) => {
     console.error("Expected:", expected);
     console.error("Got:", ast.span);
     throw new Error(`Span test failed for code: ${code}`);
-  } else {
-    console.log("Span test passed for code:", code);
-  }
+  } else {}
 };
 var mknum = (n) => mkAst("number", n);
 var mkstr = (s) => mkAst("string", s);
@@ -665,7 +678,6 @@ in x`, {
 
 // src/lsp.ts
 var astmap = (ast) => {
-  console.log(ast);
   let res = Array.from({ length: ast.span.end.offset }, () => {
     return;
   });
@@ -678,12 +690,22 @@ var astmap = (ast) => {
   walk(ast);
   return res;
 };
-{
-  let ast = parse("let x = 2 in x");
-  console.log(ast);
-  console.log(astmap(ast).map((n) => n ? n.$ : " ").join(`
-`));
-}
+var getdef = (root, vari) => {
+  if (root.span.start.offset > vari.span.start.offset || root.span.end.offset < vari.span.end.offset)
+    return;
+  for (let child of children(root)) {
+    let res = getdef(child, vari);
+    if (res)
+      return res;
+  }
+  if (root.$ === "let" && root.content.var.content.name === vari.content.name)
+    return root.content.var;
+  if (root.$ === "function") {
+    for (let v of root.content.vars)
+      if (v.content.name === vari.content.name)
+        return v;
+  }
+};
 
 // src/main.ts
 (async () => {
@@ -711,7 +733,13 @@ var Edit = editor((s) => {
     ast = undefined;
     outview.el.textContent = e instanceof Error ? e.message : String(e);
   }
-}, () => ast ? astmap(ast) : []);
+}, () => ast ? astmap(ast) : [], (req) => {
+  console.log("got req", req);
+  let def = req.$ == "var" ? getdef(ast, req) : undefined;
+  console.log("got def", def);
+  if (def)
+    Edit.setCursor({ row: def.span.start.line - 1, col: def.span.start.col - 1 });
+});
 body.style({
   padding: "44px",
   color: "white",
@@ -721,19 +749,33 @@ body.style({
   Edit.setText(`
 // This is a toy code editor still in development.
 
-// the main goal is to build a language with:
-
-// first class support for types as values
-
-// first class LSP programming in a straightforward way.
+// the goal is to build a language with:
 
 
-let x = 22 :: @number in
-let y = 33 :: @number in
+// first class supportt for types as values
+// first cass LSP programng in a straightforward way.
 
-let foo = fn x => fn y => x in
 
-(foo x y)
+
+let x = (number 22) in
+let y = (number 33) in
+
+let u = (string "hllo") in
+let r = {x:22} in
+
+let id = fn x=> x in
+let id_tye = fn f => fn x =>(number (f (number x))) in
+let typed_id = (id_type id) in
+
+
+
+let foo = fn x g => fn y => x in
+
+let str = {e: 44} in
+
+let str_e = (str {e}) in
+
+str_e
 
 
 

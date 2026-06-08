@@ -1,4 +1,5 @@
 import {div, html, p, span} from "./html"
+import { getdef } from "./lsp"
 import { Span, type AST } from "./parser"
 
 type Pos = { col: number, row: number }
@@ -16,7 +17,7 @@ const colorOf = (node: AST | undefined): string => {
 
 
 
-export const editor = (oninput: (s:string)=>void, getAstMap : ()=> AST[] ) => {
+export const editor = (oninput: (s:string)=>void, getAstMap : ()=> (AST|undefined)[], goToDef : (ast:AST) => void ) => {
 
   let lines = localStorage.getItem("lines")?.split("\n") || `
 let x = 22 :: @number in
@@ -32,8 +33,8 @@ let y = 33 :: @number in
 
 
   let hist : string[] = []
-  let elements = new WeakMap<HTMLElement, Pos>()
-  let astmap: AST[] = []
+  let elements = new WeakMap<HTMLElement, {pos:Pos, ast?: AST}>()
+  let astmap: (AST|undefined)[] = []
 
   let pless = (a: Pos, b: Pos) => a.row < b.row || (a.row == b.row && a.col < b.col)
   let plesseq = (a: Pos, b: Pos) => a.row < b.row || (a.row == b.row && a.col <= b.col)
@@ -57,6 +58,7 @@ let y = 33 :: @number in
         let color = colorOf(ast)
         if (color) c.style.color = color
         else c.style.color = ""
+        elements.get(c)!.ast = ast
       })
     }
 
@@ -77,12 +79,12 @@ let y = 33 :: @number in
               } : {}
             )
             chars.push(chr.el)
-            elements.set(chr.el, {row, col})
+            elements.set(chr.el, {pos: {row, col}})
             return chr
           }
         ),
       ).style({margin: "0"})
-      elements.set(par.el, {row, col: line.length})
+      elements.set(par.el, {pos:{row, col: line.length}})
       return par
     }))
 
@@ -222,9 +224,14 @@ let y = 33 :: @number in
   let mousedown= false  
 
   window.addEventListener("mousedown", e=>{
+    if (e.metaKey) {
+      let ast = elements.get(e.target as HTMLElement)?.ast
+      if (ast) goToDef(ast)
+      return
+    }
     mousedown = true
     if (elements.has(e.target as HTMLElement)){
-      cursor = elements.get(e.target as HTMLElement)!
+      cursor = elements.get(e.target as HTMLElement)!.pos
       render()
     }
   })
@@ -232,8 +239,7 @@ let y = 33 :: @number in
   window.addEventListener("mouseover", e=>{
     if (!mousedown) return
     if (elements.has(e.target as HTMLElement)){
-      let pos = elements.get(e.target as HTMLElement)!
-      // if (pos.col == cursor.col && pos.row == cursor.row) return
+      let pos = elements.get(e.target as HTMLElement)!.pos
       cursor.selection = cursor.selection || {row: cursor.row, col: cursor.col}
       cursor.row = pos.row
       cursor.col = pos.col
@@ -243,14 +249,23 @@ let y = 33 :: @number in
     }
   })
 
-  window.addEventListener("mouseup", e=> mousedown = false)
+  window.addEventListener("mouseup", e=> {
+    mousedown = false
+  })
 
 
   render()
-  return {el, setText: (text:string) => {
-    lines = text.split("\n")
-    render()
-  }}
+  return {el,
+    setText: (text:string) => {
+      lines = text.split("\n")
+      render()
+    },
+    setCursor: (pos: Pos) => {
+      console.log("setting cursor to", pos)
+      cursor = pos
+      render()
+    }
+  }
 
   
 }

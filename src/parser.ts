@@ -365,7 +365,7 @@ const test_parse = (code: string, expected: AST) => {
     console.error("Got:", stringify(stripSpans(ast)))
     throw new Error(`Test failed for code: ${code}`)
   } else {
-    console.log("Test passed for code:", code)
+    // console.log("Test passed for code:", code)
   }
 }
 
@@ -377,7 +377,7 @@ const test_span = (code: string, expected: Span) => {
     console.error("Got:", ast.span)
     throw new Error(`Span test failed for code: ${code}`)
   } else {
-    console.log("Span test passed for code:", code)
+    // console.log("Span test passed for code:", code)
   }
 }
 

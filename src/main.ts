@@ -1,7 +1,7 @@
 import { body, html, span , fromHTML} from "./html";
 import { editor } from "./editor";
 import { children, parse, prettyAST, type AST, type Span } from "./parser";
-import { astmap } from "./lsp"
+import { astmap, getdef } from "./lsp"
 
 
 (async ()=>{
@@ -14,6 +14,8 @@ import { astmap } from "./lsp"
   }
 })();
 
+
+
 let outview = html('pre')().style({
   borderTop: "1px solid white",
   paddingTop: "16px",
@@ -23,14 +25,22 @@ let ast: AST | undefined
 
 
 let Edit = editor(s=> {
-  try{
-    ast = parse(s)  
-    outview.el.textContent = prettyAST(ast)
-  }catch(e){
-    ast = undefined
-    outview.el.textContent = e instanceof Error ? e.message : String(e)
+    try{
+      ast = parse(s)  
+      outview.el.textContent = prettyAST(ast)
+    }catch(e){
+      ast = undefined
+      outview.el.textContent = e instanceof Error ? e.message : String(e)
+    }
+  },
+  ()=> ast ? astmap(ast) : [],
+  (req) => {
+    console.log("got req", req)
+    let def = req.$ == "var" ? getdef(ast!, req) : undefined
+    console.log("got def", def)
+    if (def) Edit.setCursor({row: def.span.start.line-1, col: def.span.start.col-1})
   }
-}, ()=> ast ? astmap(ast) : [])
+)
 
 body.style({
   padding: "44px",
@@ -51,19 +61,33 @@ body.style({
     Edit.setText(`
 // This is a toy code editor still in development.
 
-// the main goal is to build a language with:
-
-// first class support for types as values
-
-// first class LSP programming in a straightforward way.
+// the goal is to build a language with:
 
 
-let x = 22 :: @number in
-let y = 33 :: @number in
+// first class supportt for types as values
+// first cass LSP programng in a straightforward way.
 
-let foo = fn x => fn y => x in
 
-(foo x y)
+
+let x = (number 22) in
+let y = (number 33) in
+
+let u = (string "hllo") in
+let r = {x:22} in
+
+let id = fn x=> x in
+let id_tye = fn f => fn x =>(number (f (number x))) in
+let typed_id = (id_type id) in
+
+
+
+let foo = fn x g => fn y => x in
+
+let str = {e: 44} in
+
+let str_e = (str {e}) in
+
+str_e
 
 
 
