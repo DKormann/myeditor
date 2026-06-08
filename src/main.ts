@@ -4,7 +4,7 @@ import { children, parse, prettyAST, type AST, type Span } from "./parser";
 import { astmap, getdef } from "./lsp"
 
 
-(async ()=>{
+if (window.location.origin.includes("localhost"))(async ()=>{
   let version = await fetch("/version").then(res => res.text())
   .catch(e=>"0")
   while (true){
