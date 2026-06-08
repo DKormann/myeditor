@@ -23,7 +23,7 @@ let x = 22 :: @number in
 let y = 33 :: @number in
 (@add x y)
 `.split("\n")
-  let cursor : Pos & {selection? : Pos} = {col:5, row:5, selection: {col: 4, row: 3}
+  let cursor : Pos & {selection? : Pos} = {col:2, row:5, selection: {col: 0, row: 5}
 }
   let el = html("pre")()
   .style({
@@ -32,12 +32,10 @@ let y = 33 :: @number in
 
 
   let hist : string[] = []
-
   let elements = new WeakMap<HTMLElement, Pos>()
-  let setCursor = (pos:Pos) => {cursor = pos; render()}
-
   let astmap: AST[] = []
 
+  let pless = (a: Pos, b: Pos) => a.row < b.row || (a.row == b.row && a.col < b.col)
   let plesseq = (a: Pos, b: Pos) => a.row < b.row || (a.row == b.row && a.col <= b.col)
 
   let selrange = () : undefined | [Pos, Pos] => {
@@ -63,7 +61,6 @@ let y = 33 :: @number in
     }
 
     let range = selrange()
-    console.log(range)
 
 
     el.replaceChilren(...lines.map((line,row)=>{
@@ -72,9 +69,12 @@ let y = 33 :: @number in
           (char,col)=>{
 
             let chr = span(char)
-            .style( range && plesseq({row, col}, range[1]) && plesseq(range[0], {row, col}) ? {backgroundColor: "#8d96ff85", color: "black"} : {})
+            .style( range && pless({row, col}, range[1]) && plesseq(range[0], {row, col}) ? {backgroundColor: "#8d96ff85", color: "black"} : {})
             .style(
-              cursor.row === row && scol === col ? {backgroundColor: "#ffffff", color: "black"} : {}
+              cursor.row === row && scol === col ? {
+
+                boxShadow: "2px 0 0 0 white inset",
+              } : {}
             )
             chars.push(chr.el)
             elements.set(chr.el, {row, col})
@@ -100,14 +100,21 @@ let y = 33 :: @number in
 
 
 
-  let clear_range = () => {
-    let range = selrange()
-    if (!range) return
-    lines = [...lines.slice(0, range[0].row), lines[range[0].row].substring(0, range[0].col) + lines[range[1].row].substring(range[1].col), ...lines.slice(range[1].row + 1)]
-    setCursor(range[0])
-  }
-
   window.addEventListener("keydown", e=>{
+    let setCursor = (pos:Pos)=>{
+      if (!e.shiftKey) cursor.selection = undefined
+      else cursor.selection = cursor.selection || {row: cursor.row, col: cursor.col}
+      cursor.col = pos.col
+      cursor.row = pos.row
+    }
+
+    let clear_range = () => {
+      let range = selrange()
+      if (!range) return
+      lines = [...lines.slice(0, range[0].row), lines[range[0].row].substring(0, range[0].col) + lines[range[1].row].substring(range[1].col), ...lines.slice(range[1].row + 1)]
+      setCursor({row: range[0].row, col: range[0].col})
+    }
+
     if (e.key.length === 1){
       if (e.metaKey){
         if (e.key == "z"){
@@ -118,6 +125,7 @@ let y = 33 :: @number in
             lines = last.split("\n")
             setCursor({row:0, col:0})
           }
+          render()
         }
         if (e.key == "c"){
           let range = selrange()
@@ -143,15 +151,15 @@ let y = 33 :: @number in
         return
       }
       lines[cursor.row] = lines[cursor.row].substring(0, cursor.col) + e.key + lines[cursor.row].substring(cursor.col)
-      cursor.col++
-      render()
+      setCursor({row: cursor.row, col: cursor.col + 1})
     }
     if (e.key === "Backspace"){
       let range = selrange()
       if (range){
-        clear_range() 
+        clear_range()
+
       }
-      if (e.metaKey && cursor.col > 0){
+      else if (e.metaKey && cursor.col > 0){
         lines = [...lines.slice(0, cursor.row), lines[cursor.row].substring( cursor.col), ...lines.slice(cursor.row + 1)]
         cursor.col = 0
       
@@ -167,41 +175,29 @@ let y = 33 :: @number in
 
     if (e.key === "ArrowLeft"){
       if (e.metaKey){
-        if (cursor.col > 0) {
-          cursor.col = 0
-        }else if (cursor.row > 0){
-          cursor.row--
-          cursor.col = lines[cursor.row].length
-        }
+        if (cursor.col > 0) setCursor({row: cursor.row, col: 0})
+        else if (cursor.row > 0) setCursor({row: cursor.row - 1, col: lines[cursor.row - 1].length})
       }
-      else if (cursor.col > 0){
-        cursor.col--
-      }else if (cursor.row > 0){
-        cursor.row--
-        cursor.col = lines[cursor.row].length
-      }
+      else if (cursor.col > 0) setCursor({row: cursor.row, col: cursor.col - 1})
+      else if (cursor.row > 0) setCursor({row: cursor.row - 1, col: lines[cursor.row - 1].length})
+
     }
     if (e.key === "ArrowRight"){
-      if (e.metaKey) {
-        if (cursor.col < lines[cursor.row].length) cursor.col = lines[cursor.row].length
-        else if (cursor.row < lines.length - 1){
-          cursor.row++
-          cursor.col = 0
-        }
+      if (e.metaKey){
+        if (cursor.col < lines[cursor.row].length) setCursor({row: cursor.row, col: lines[cursor.row].length})
+        else if (cursor.row < lines.length - 1) setCursor({row: cursor.row + 1, col: 0})
       }
-      else if (cursor.col < lines[cursor.row].length) cursor.col++
-      else if (cursor.row < lines.length - 1){
-        cursor.row++
-        cursor.col = 0
-      }
+      else if (cursor.col < lines[cursor.row].length) setCursor({row: cursor.row, col: cursor.col + 1})
+      else if (cursor.row < lines.length - 1) setCursor({row: cursor.row + 1, col: 0})
     }
+
     if (e.key === "ArrowUp"){
-      if (e.metaKey) cursor.row = 0
-      else if (cursor.row > 0) cursor.row--
+      if (e.metaKey) setCursor({row: 0, col: cursor.col})
+      else if (cursor.row > 0) setCursor({row: cursor.row - 1, col: cursor.col})
     }
     if (e.key === "ArrowDown"){
-      if (e.metaKey) cursor.row = lines.length - 1
-      else if (cursor.row < lines.length - 1) cursor.row++
+      if (e.metaKey) setCursor({row: lines.length - 1, col: cursor.col})
+      else if (cursor.row < lines.length - 1) setCursor({row: cursor.row + 1, col: cursor.col})
     }
     if (e.key === "Enter"){
       lines = [
@@ -215,7 +211,6 @@ let y = 33 :: @number in
 
 
     if (e.key.startsWith("Arrow")){
-
       e.preventDefault()
     }
 
@@ -228,14 +223,17 @@ let y = 33 :: @number in
 
   window.addEventListener("mousedown", e=>{
     mousedown = true
-    if (elements.has(e.target as HTMLElement))
-      setCursor(elements.get(e.target as HTMLElement)!)
+    if (elements.has(e.target as HTMLElement)){
+      cursor = elements.get(e.target as HTMLElement)!
+      render()
+    }
   })
 
   window.addEventListener("mouseover", e=>{
     if (!mousedown) return
     if (elements.has(e.target as HTMLElement)){
       let pos = elements.get(e.target as HTMLElement)!
+      // if (pos.col == cursor.col && pos.row == cursor.row) return
       cursor.selection = cursor.selection || {row: cursor.row, col: cursor.col}
       cursor.row = pos.row
       cursor.col = pos.col
@@ -251,7 +249,6 @@ let y = 33 :: @number in
   render()
   return {el, setText: (text:string) => {
     lines = text.split("\n")
-    setCursor({row:0, col:0})
     render()
   }}
 

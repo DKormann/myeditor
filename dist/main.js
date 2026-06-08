@@ -69,20 +69,17 @@ let y = 33 :: @number in
 `.split(`
 `);
   let cursor = {
-    col: 5,
+    col: 2,
     row: 5,
-    selection: { col: 4, row: 3 }
+    selection: { col: 0, row: 5 }
   };
   let el = html("pre")().style({
     userSelect: "none"
   });
   let hist = [];
   let elements = new WeakMap;
-  let setCursor = (pos) => {
-    cursor = pos;
-    render();
-  };
   let astmap = [];
+  let pless = (a, b) => a.row < b.row || a.row == b.row && a.col < b.col;
   let plesseq = (a, b) => a.row < b.row || a.row == b.row && a.col <= b.col;
   let selrange = () => {
     if (!cursor.selection)
@@ -108,10 +105,11 @@ let y = 33 :: @number in
       });
     };
     let range = selrange();
-    console.log(range);
     el.replaceChilren(...lines.map((line, row) => {
       let par = p(...line.split("").concat(" ").map((char, col) => {
-        let chr = span(char).style(range && plesseq({ row, col }, range[1]) && plesseq(range[0], { row, col }) ? { backgroundColor: "#8d96ff85", color: "black" } : {}).style(cursor.row === row && scol === col ? { backgroundColor: "#ffffff", color: "black" } : {});
+        let chr = span(char).style(range && pless({ row, col }, range[1]) && plesseq(range[0], { row, col }) ? { backgroundColor: "#8d96ff85", color: "black" } : {}).style(cursor.row === row && scol === col ? {
+          boxShadow: "2px 0 0 0 white inset"
+        } : {});
         chars.push(chr.el);
         elements.set(chr.el, { row, col });
         return chr;
@@ -128,14 +126,22 @@ let y = 33 :: @number in
       mkcolor();
     }
   };
-  let clear_range = () => {
-    let range = selrange();
-    if (!range)
-      return;
-    lines = [...lines.slice(0, range[0].row), lines[range[0].row].substring(0, range[0].col) + lines[range[1].row].substring(range[1].col), ...lines.slice(range[1].row + 1)];
-    setCursor(range[0]);
-  };
   window.addEventListener("keydown", (e) => {
+    let setCursor = (pos) => {
+      if (!e.shiftKey)
+        cursor.selection = undefined;
+      else
+        cursor.selection = cursor.selection || { row: cursor.row, col: cursor.col };
+      cursor.col = pos.col;
+      cursor.row = pos.row;
+    };
+    let clear_range = () => {
+      let range = selrange();
+      if (!range)
+        return;
+      lines = [...lines.slice(0, range[0].row), lines[range[0].row].substring(0, range[0].col) + lines[range[1].row].substring(range[1].col), ...lines.slice(range[1].row + 1)];
+      setCursor({ row: range[0].row, col: range[0].col });
+    };
     if (e.key.length === 1) {
       if (e.metaKey) {
         if (e.key == "z") {
@@ -147,6 +153,7 @@ let y = 33 :: @number in
 `);
             setCursor({ row: 0, col: 0 });
           }
+          render();
         }
         if (e.key == "c") {
           let range = selrange();
@@ -178,15 +185,13 @@ let y = 33 :: @number in
         return;
       }
       lines[cursor.row] = lines[cursor.row].substring(0, cursor.col) + e.key + lines[cursor.row].substring(cursor.col);
-      cursor.col++;
-      render();
+      setCursor({ row: cursor.row, col: cursor.col + 1 });
     }
     if (e.key === "Backspace") {
       let range = selrange();
       if (range) {
         clear_range();
-      }
-      if (e.metaKey && cursor.col > 0) {
+      } else if (e.metaKey && cursor.col > 0) {
         lines = [...lines.slice(0, cursor.row), lines[cursor.row].substring(cursor.col), ...lines.slice(cursor.row + 1)];
         cursor.col = 0;
       } else if (cursor.col > 0) {
@@ -200,45 +205,37 @@ let y = 33 :: @number in
     }
     if (e.key === "ArrowLeft") {
       if (e.metaKey) {
-        if (cursor.col > 0) {
-          cursor.col = 0;
-        } else if (cursor.row > 0) {
-          cursor.row--;
-          cursor.col = lines[cursor.row].length;
-        }
-      } else if (cursor.col > 0) {
-        cursor.col--;
-      } else if (cursor.row > 0) {
-        cursor.row--;
-        cursor.col = lines[cursor.row].length;
-      }
+        if (cursor.col > 0)
+          setCursor({ row: cursor.row, col: 0 });
+        else if (cursor.row > 0)
+          setCursor({ row: cursor.row - 1, col: lines[cursor.row - 1].length });
+      } else if (cursor.col > 0)
+        setCursor({ row: cursor.row, col: cursor.col - 1 });
+      else if (cursor.row > 0)
+        setCursor({ row: cursor.row - 1, col: lines[cursor.row - 1].length });
     }
     if (e.key === "ArrowRight") {
       if (e.metaKey) {
         if (cursor.col < lines[cursor.row].length)
-          cursor.col = lines[cursor.row].length;
-        else if (cursor.row < lines.length - 1) {
-          cursor.row++;
-          cursor.col = 0;
-        }
+          setCursor({ row: cursor.row, col: lines[cursor.row].length });
+        else if (cursor.row < lines.length - 1)
+          setCursor({ row: cursor.row + 1, col: 0 });
       } else if (cursor.col < lines[cursor.row].length)
-        cursor.col++;
-      else if (cursor.row < lines.length - 1) {
-        cursor.row++;
-        cursor.col = 0;
-      }
+        setCursor({ row: cursor.row, col: cursor.col + 1 });
+      else if (cursor.row < lines.length - 1)
+        setCursor({ row: cursor.row + 1, col: 0 });
     }
     if (e.key === "ArrowUp") {
       if (e.metaKey)
-        cursor.row = 0;
+        setCursor({ row: 0, col: cursor.col });
       else if (cursor.row > 0)
-        cursor.row--;
+        setCursor({ row: cursor.row - 1, col: cursor.col });
     }
     if (e.key === "ArrowDown") {
       if (e.metaKey)
-        cursor.row = lines.length - 1;
+        setCursor({ row: lines.length - 1, col: cursor.col });
       else if (cursor.row < lines.length - 1)
-        cursor.row++;
+        setCursor({ row: cursor.row + 1, col: cursor.col });
     }
     if (e.key === "Enter") {
       lines = [
@@ -258,8 +255,10 @@ let y = 33 :: @number in
   let mousedown = false;
   window.addEventListener("mousedown", (e) => {
     mousedown = true;
-    if (elements.has(e.target))
-      setCursor(elements.get(e.target));
+    if (elements.has(e.target)) {
+      cursor = elements.get(e.target);
+      render();
+    }
   });
   window.addEventListener("mouseover", (e) => {
     if (!mousedown)
@@ -277,7 +276,6 @@ let y = 33 :: @number in
   return { el, setText: (text) => {
     lines = text.split(`
 `);
-    setCursor({ row: 0, col: 0 });
     render();
   } };
 };
