@@ -709,11 +709,11 @@ var getdef = (root, vari) => {
 
 // src/main.ts
 (async () => {
-  let version = await fetch("/version").then((res) => res.text());
+  let version = await fetch("/version").then((res) => res.text()).catch((e) => "0");
   while (true) {
     await new Promise((r) => setTimeout(r, 100));
     try {
-      if (await fetch("/version").then((res) => res.text()) != version)
+      if (await fetch("/version").then((res) => res.text()).catch((e) => "0") != version)
         window.location.reload();
     } catch (e) {
       break;

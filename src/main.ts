@@ -6,10 +6,11 @@ import { astmap, getdef } from "./lsp"
 
 (async ()=>{
   let version = await fetch("/version").then(res => res.text())
+  .catch(e=>"0")
   while (true){
     await new Promise(r => setTimeout(r, 100))
     try{
-      if (await fetch("/version").then(res => res.text()) != version) window.location.reload()
+      if (await fetch("/version").then(res => res.text()).catch(e=>"0")!= version) window.location.reload()
     }catch(e){break;}
   }
 })();
