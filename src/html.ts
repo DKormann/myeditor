@@ -5,9 +5,8 @@ export type NODE <H extends HTMLElement = HTMLElement> =  {
   el: H,
   append: (...children: (NODE | string)[]) => NODE,
   replaceChilren: (...children: (NODE | string)[]) => NODE,
-
-  style: (styles: Partial<CSSStyleDeclaration>) => NODE
-  onclick: (handler: (event: MouseEvent) => void) => NODE
+  style: (styles: Partial<CSSStyleDeclaration>) => NODE,
+  assign: (htmlProps: Partial<HTMLElement>) => NODE
 }
 
 
@@ -16,7 +15,8 @@ export type ARG = NODE | string | ((e:MouseEvent)=>void)
 export const html = <K extends keyof HTMLElementTagNameMap> (tag:K) => (...children:ARG[]): NODE <HTMLElementTagNameMap[K]> => {
   let onclick = children.find(c => typeof c === "function") as Function
   let el = fromHTML (document.createElement(tag)).append(... children.filter(c => typeof c !== "function") as (NODE | string)[]) as NODE <HTMLElementTagNameMap[K]>;
-  if (onclick) el.onclick(onclick as (e:MouseEvent)=>void)
+  if (onclick) el.el. onclick = (onclick as (e:MouseEvent)=>void)
+  
   return el
 }
 
@@ -41,8 +41,8 @@ export const fromHTML  = <H extends HTMLElement>  (el:H): NODE <H> => {
       Object.assign(el.style, styles);
       return fromHTML(el);
     },
-    onclick: (handler: (event: MouseEvent) => void) => {
-      el.addEventListener("click", handler);
+    assign: (htmlProps: Partial<HTMLElement>) => {
+      Object.assign(el, htmlProps);
       return fromHTML(el);
     }
   };

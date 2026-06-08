@@ -22,6 +22,7 @@ setInterval(async () => {
 
 
 
+console.log("serve at http://localhost:3030")
 Bun.serve({
   port: 3030,
   routes: {

@@ -12,9 +12,25 @@ export type AST =
   | Tag<"number", number>
   | Tag<"string", string>
   | Tag<"builtin", string>
-  | Tag<"let", {var: string, value: AST, body: AST}>
+  | Tag<"let", {var: Var, value: AST, body: AST}>
   | Tag<"annot", {type: AST, value: AST}>
-  | Tag<"record", [string, AST][]>
+  | Tag<"record", [Var, AST][]>
+
+
+export const prettyAST = (node: AST): string =>{
+  switch(node.$){
+    case "number" : return node.content.toString()
+    case "string" : return JSON.stringify(node.content)
+    case "builtin": return node.content
+    case "var": return node.content.name
+    case "let": return `let ${node.content.var.content.name} = ${prettyAST(node.content.value)} in\n${prettyAST(node.content.body)}`
+    case "function": return `fn ${node.content.vars.map(v=>v.content.name).join(" ")} => ${prettyAST(node.content.body)}`
+    case "app": return `(${prettyAST(node.content.fn)} ${node.content.args.map(prettyAST).join(" ")})`
+    case "annot": return `${prettyAST(node.content.value)} :: ${prettyAST(node.content.type)}`
+    case "record": return `{${node.content.map(([k, v]) => `${k.content.name}: ${prettyAST(v)}`).join(", ")}}`
+  }
+}
+
 
 const zeroPos = (): Pos => ({offset: 0, line: 1, col: 1})
 const zeroSpan = (): Span => ({start: zeroPos(), end: zeroPos()})
@@ -62,6 +78,13 @@ const tokenize = (code: string): Token[] => {
 
     if (/\s/.test(char)) {
       advance()
+      continue
+    }
+
+    if (char === "/" && code[i + 1] === "/") {
+      advance()
+      advance()
+      while (i < code.length && code[i] !== "\n") advance()
       continue
     }
 
@@ -167,12 +190,12 @@ class Parser {
 
   private parseLet(): AST {
     let start = this.expectKeyword("let").span.start
-    let name = this.expectIdent()
+    let name = this.expectToken("ident")
     this.expectSymbol("=")
     let value = this.parseExpr()
     this.expectKeyword("in")
     let body = this.parseExpr()
-    return mkAst("let", {var: name, value, body}, {start, end: body.span.end})
+    return mkAst("let", {var: mkAst("var", {name:name.value}, name.span), value, body}, {start, end: body.span.end})
   }
 
   private parseFunction(): AST {
@@ -243,13 +266,15 @@ class Parser {
 
   private parseRecord(): AST {
     let open = this.expectSymbol("{")
-    let fields: [string, AST][] = []
+    let fields: [Var, AST][] = []
 
     while (!this.isSymbol("}")) {
-      let name = this.expectIdent()
-      this.expectSymbol(":")
-      let value = this.parseExpr()
-      fields.push([name, value])
+      let name = this.expectToken("ident")
+      let key = mkAst("var", {name: name.value}, name.span)
+      let value = this.isSymbol(":")
+        ? (this.expectSymbol(":"), this.parseExpr())
+        : key
+      fields.push([key, value])
       if (this.isSymbol(",")) this.i++
       else break
     }
@@ -313,27 +338,31 @@ export const parse = (code:string):AST => new Parser(tokenize(code)).parse()
 export const children = (node: AST): AST[] => {
   if (node.$ === "function") return [...node.content.vars, node.content.body]
   if (node.$ === "app") return [node.content.fn, ...node.content.args]
-  if (node.$ === "let") return [node.content.value, node.content.body]
+  if (node.$ === "let") return [node.content.var, node.content.value, node.content.body]
   if (node.$ === "annot") return [node.content.value, node.content.type]
-  if (node.$ === "record") return node.content.map(([, value]) => value)
+  if (node.$ === "record") return node.content.flatMap(([key, value]) => [key, value])
   return []
 }
 
 const stripSpans = (ast: AST): unknown => {
   if (ast.$ === "function") return {$: ast.$, content: {vars: ast.content.vars.map(stripSpans), body: stripSpans(ast.content.body)}}
   if (ast.$ === "app") return {$: ast.$, content: {fn: stripSpans(ast.content.fn), args: ast.content.args.map(stripSpans)}}
-  if (ast.$ === "let") return {$: ast.$, content: {var: ast.content.var, value: stripSpans(ast.content.value), body: stripSpans(ast.content.body)}}
+  if (ast.$ === "let") return {$: ast.$, content: {var: stripSpans(ast.content.var), value: stripSpans(ast.content.value), body: stripSpans(ast.content.body)}}
   if (ast.$ === "annot") return {$: ast.$, content: {type: stripSpans(ast.content.type), value: stripSpans(ast.content.value)}}
-  if (ast.$ === "record") return {$: ast.$, content: ast.content.map(([name, value]) => [name, stripSpans(value)])}
+  if (ast.$ === "record") return {$: ast.$, content: ast.content.map(([name, value]) => [stripSpans(name), stripSpans(value)])}
   return {$: ast.$, content: ast.content}
 }
 
+
+let stringify = (x: unknown) => JSON.stringify(x, null, 2)
+
 const test_parse = (code: string, expected: AST) => {
   let ast = parse(code)
+
   if (JSON.stringify(stripSpans(ast)) !== JSON.stringify(stripSpans(expected))) {
     console.error("Test failed for code:", code)
-    console.error("Expected:", expected)
-    console.error("Got:", ast)
+    console.error("Expected:", stringify(stripSpans(expected)))
+    console.error("Got:", stringify(stripSpans(ast)))
     throw new Error(`Test failed for code: ${code}`)
   } else {
     console.log("Test passed for code:", code)
@@ -356,9 +385,11 @@ let mknum = (n: number) => mkAst("number", n)
 let mkstr = (s: string) => mkAst("string", s)
 let mkvar = (name: string) => mkAst("var", {name})
 let mkapp = (fn: AST, args: AST[]) => mkAst("app", {fn, args})
-let mklet = (v: string, value: AST, body: AST) => mkAst("let", {var: v, value, body})
+let mklet = (v: string, value: AST, body: AST) => mkAst("let", {var: mkvar(v), value, body})
+let mkfun = (vars: string[], body: AST) => mkAst("function", {vars: vars.map(mkvar), body})
 let annot = (type: AST, value: AST) => mkAst("annot", {type, value})
 let builtin = (name: string) => mkAst("builtin", name)
+let mkrecord = (fields: {[key : string] : AST}) => mkAst("record", Object.entries(fields).map(([k,v])=> [mkvar(k), v]))
 
 Object.entries({
   "x": mkvar("x"),
@@ -369,8 +400,13 @@ Object.entries({
   "@foo": mkAst("builtin", "foo"),
   "let x = 22 in x": mklet("x", mknum(22), mkvar("x")),
   "x :: @number": annot(builtin("number"), mkvar("x")),
-  "{a: 22, b: x}": mkAst("record", [["a", mknum(22)], ["b", mkvar("x")]]),
-  "fn x => x": mkAst("function", {vars: [mkvar("x")], body: mkvar("x")}),
+  "{a: 22, b: x}": mkrecord({a: mknum(22), b: mkvar("x")}),
+  "fn x => x": mkfun(["x"], mkvar("x")),
+  "fn x y => x": mkfun(["x", "y"], mkvar("x")),
+  "{e:22}" : mkrecord({e: mknum(22)}),
+  "{e}": mkrecord({e: mkvar("e")}),
+  "//comment\n22": parse("22"),
+
 }).forEach(([code, expected]) => test_parse(code, expected as AST))
 
 test_span("let x = 22\nin x", {
