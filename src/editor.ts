@@ -1,23 +1,25 @@
 import {div, html, p, span} from "./html"
 import { getdef } from "./lsp"
-import { Span, type AST } from "./parser"
+import { Span, type AST, type SyntaxNode } from "./parser"
 
 type Pos = { col: number, row: number }
 
-const colorOf = (node: AST | undefined): string => {
+const colorOf = (node: SyntaxNode | undefined): string => {
   if (node == undefined) return "#848484"
+  if (node.$ === "comment") return "#6f7b86"
   if (node.$ === "number" || node.$ === "string" ) return "#d3af21"
   if (node.$ === "var") return "#f983ef"
   if (node.$ === "let" || node.$ == "function" ) return "#5b8fff"
   if (node.$ === "app") return "#50e37c"
+  if (node.$ === "error") return "#ff0000"
   return "#ffffff"
 }
 
 
 export const editor = (oninput: (s:string)=>void,
-  getAstMap : ()=> (AST|undefined)[],
-  goToDef : (ast:AST) => void,
-  hoverInfo: (ast: AST) => string | undefined,
+  getAstMap : ()=> (SyntaxNode|undefined)[],
+  goToDef : (ast: SyntaxNode) => void,
+  hoverInfo: (ast: SyntaxNode) => string | undefined,
 
 ) => {
 
@@ -36,8 +38,8 @@ let y = 33 :: @number in
 
 
   let hist : string[] = []
-  let elements = new WeakMap<HTMLElement, {pos:Pos, ast?: AST}>()
-  let astmap: (AST|undefined)[] = []
+  let elements = new WeakMap<HTMLElement, {pos:Pos, ast?: SyntaxNode}>()
+  let astmap: (SyntaxNode|undefined)[] = []
 
   let pless = (a: Pos, b: Pos) => a.row < b.row || (a.row == b.row && a.col < b.col)
   let plesseq = (a: Pos, b: Pos) => a.row < b.row || (a.row == b.row && a.col <= b.col)
@@ -79,12 +81,7 @@ let y = 33 :: @number in
 
             let chr = span(char)
             .style( range && pless({row, col}, range[1]) && plesseq(range[0], {row, col}) ? {backgroundColor: "#8d96ff85", color: "black"} : {})
-            .style(
-              cursor.row === row && scol === col ? {
-
-                boxShadow: "2px 0 0 0 white inset",
-              } : {}
-            )
+            .style(cursor.row === row && scol === col ? {boxShadow: "2px 0 0 0 white inset",} : {})
             chars.push(chr.el)
             elements.set(chr.el, {pos: {row, col}})
             return chr

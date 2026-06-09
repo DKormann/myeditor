@@ -50,6 +50,8 @@ var button = html("button");
 var colorOf = (node) => {
   if (node == undefined)
     return "#848484";
+  if (node.$ === "comment")
+    return "#6f7b86";
   if (node.$ === "number" || node.$ === "string")
     return "#d3af21";
   if (node.$ === "var")
@@ -58,6 +60,8 @@ var colorOf = (node) => {
     return "#5b8fff";
   if (node.$ === "app")
     return "#50e37c";
+  if (node.$ === "error")
+    return "#ff0000";
   return "#ffffff";
 };
 var editor = (oninput, getAstMap, goToDef, hoverInfo) => {
@@ -109,9 +113,7 @@ let y = 33 :: @number in
     let range = selrange();
     el.replaceChilren(...lines.map((line, row) => {
       let par = p(...line.split("").concat(" ").map((char, col) => {
-        let chr = span(char).style(range && pless({ row, col }, range[1]) && plesseq(range[0], { row, col }) ? { backgroundColor: "#8d96ff85", color: "black" } : {}).style(cursor.row === row && scol === col ? {
-          boxShadow: "2px 0 0 0 white inset"
-        } : {});
+        let chr = span(char).style(range && pless({ row, col }, range[1]) && plesseq(range[0], { row, col }) ? { backgroundColor: "#8d96ff85", color: "black" } : {}).style(cursor.row === row && scol === col ? { boxShadow: "2px 0 0 0 white inset" } : {});
         chars.push(chr.el);
         elements.set(chr.el, { pos: { row, col } });
         return chr;
@@ -366,6 +368,7 @@ var zeroSpan = () => ({ start: zeroPos(), end: zeroPos() });
 var mkAst = (tag, content, span2 = zeroSpan()) => ({ $: tag, content, span: span2 });
 var tokenize = (code) => {
   let tokens = [];
+  let comments = [];
   let i = 0;
   let line = 1;
   let col = 1;
@@ -394,11 +397,13 @@ var tokenize = (code) => {
       continue;
     }
     if (char === "/" && code[i + 1] === "/") {
+      let start2 = pos();
       advance();
       advance();
       while (i < code.length && code[i] !== `
 `)
         advance();
+      comments.push(mkAst("comment", code.slice(start2.offset, i), { start: start2, end: pos() }));
       continue;
     }
     if (char === "=" && code[i + 1] === ">") {
@@ -426,7 +431,7 @@ var tokenize = (code) => {
           if (next === undefined) {
             advance();
             push({ type: "error", message: "Unterminated string escape", content: code.slice(start2.offset, i) }, start2);
-            return { tokens, eof: pos() };
+            return { tokens, comments, eof: pos() };
           }
           let escaped = { n: `
 `, r: "\r", t: "\t", '"': '"', "\\": "\\" }[next];
@@ -442,7 +447,7 @@ var tokenize = (code) => {
       }
       if (code[i] !== '"') {
         push({ type: "error", message: "Unterminated string literal", content: code.slice(start2.offset, i) }, start2);
-        return { tokens, eof: pos() };
+        return { tokens, comments, eof: pos() };
       }
       advance();
       push({ type: "string", value }, start2);
@@ -472,7 +477,7 @@ var tokenize = (code) => {
     advance();
     push({ type: "error", message: `Unexpected character: ${char}`, content: char }, start);
   }
-  return { tokens, eof: pos() };
+  return { tokens, comments, eof: pos() };
 };
 
 class Parser {
@@ -575,7 +580,7 @@ class Parser {
     let items = [];
     while (!this.isSymbol(")")) {
       if (!this.peek()) {
-        let end = items.at(-1)?.span.end ?? open.span.end;
+        let end = items.length > 0 ? items[items.length - 1].span.end : open.span.end;
         return this.errorNode("Unterminated parenthesized expression", { start: open.span.start, end }, this.source.slice(open.span.start.offset, end.offset));
       }
       items.push(this.parseExpr());
@@ -592,7 +597,7 @@ class Parser {
     let fields = [];
     while (!this.isSymbol("}")) {
       if (!this.peek()) {
-        let end = fields.at(-1)?.[1].span.end ?? open.span.end;
+        let end = fields.length > 0 ? fields[fields.length - 1][1].span.end : open.span.end;
         return this.errorNode("Unterminated record", { start: open.span.start, end }, this.source.slice(open.span.start.offset, end.offset));
       }
       let name = this.matchToken("ident");
@@ -610,7 +615,7 @@ class Parser {
         break;
     }
     if (!this.isSymbol("}")) {
-      let end = fields.at(-1)?.[1].span.end ?? open.span.end;
+      let end = fields.length > 0 ? fields[fields.length - 1][1].span.end : open.span.end;
       return this.errorNode("Unterminated record", { start: open.span.start, end }, this.source.slice(open.span.start.offset, end.offset));
     }
     let close = this.expectSymbol("}");
@@ -655,12 +660,6 @@ class Parser {
     this.i++;
     return token;
   }
-  expectArrow() {
-    return this.expectToken("arrow");
-  }
-  expectIdent() {
-    return this.expectToken("ident").value;
-  }
   describe(token) {
     if (!token)
       return "end of input";
@@ -688,10 +687,29 @@ class Parser {
     return { start: this.eof, end: this.eof };
   }
 }
-var parse = (code) => {
-  let { tokens, eof } = tokenize(code);
-  return new Parser(tokens, code, eof).parse();
+var buildAstMap = (ast, comments = []) => {
+  let maxEnd = comments.reduce((m, c) => c.span.end.offset > m ? c.span.end.offset : m, ast.span.end.offset);
+  let res = Array.from({ length: maxEnd }, () => {
+    return;
+  });
+  const walk = (node) => {
+    for (let i = node.span.start.offset;i < node.span.end.offset; i++)
+      res[i] = node;
+    children(node).forEach(walk);
+  };
+  walk(ast);
+  comments.forEach((comment) => {
+    for (let i = comment.span.start.offset;i < comment.span.end.offset; i++)
+      res[i] = comment;
+  });
+  return res;
 };
+var parse = (code) => {
+  let { tokens, comments, eof } = tokenize(code);
+  let ast = new Parser(tokens, code, eof).parse();
+  return { ast, comments, astmap: buildAstMap(ast, comments) };
+};
+var parseAST = (code) => parse(code).ast;
 var children = (node) => {
   if (node.$ === "function")
     return [...node.content.vars, node.content.body];
@@ -718,16 +736,16 @@ var stripSpans = (ast) => {
 };
 var stringify = (x) => JSON.stringify(x, null, 2);
 var test_parse = (code, expected) => {
-  let ast = parse(code);
+  let ast = parseAST(code);
   if (JSON.stringify(stripSpans(ast)) !== JSON.stringify(stripSpans(expected))) {
     console.error("Test failed for code:", code);
     console.error("Expected:", stringify(stripSpans(expected)));
     console.error("Got:", stringify(stripSpans(ast)));
     throw new Error(`Test failed for code: ${code}`);
-  } else {}
+  }
 };
 var test_span = (code, expected) => {
-  let ast = parse(code);
+  let ast = parseAST(code);
   if (JSON.stringify(ast.span) !== JSON.stringify(expected)) {
     console.error("Span test failed for code:", code);
     console.error("Expected:", expected);
@@ -754,7 +772,7 @@ Object.entries({
   "fn x y => x": mkfun(["x", "y"], mkvar("x")),
   "{e:22}": mkrecord({ e: mknum(22) }),
   "{e}": mkrecord({ e: mkvar("e") }),
-  "//comment\n22": parse("22")
+  "//comment\n22": parseAST("22")
 }).forEach(([code, expected]) => test_parse(code, expected));
 Object.entries({
   "(": mkAst("error", { message: "Unterminated parenthesized expression", content: "(" }),
@@ -772,19 +790,6 @@ in x`, {
 });
 
 // src/lsp.ts
-var astmap = (ast) => {
-  let res = Array.from({ length: ast.span.end.offset }, () => {
-    return;
-  });
-  const walk = (node) => {
-    for (let i = node.span.start.offset;i < node.span.end.offset; i++) {
-      res[i] = node;
-    }
-    children(node).forEach(walk);
-  };
-  walk(ast);
-  return res;
-};
 var getdef = (root, vari) => {
   if (root.span.start.offset > vari.span.start.offset || root.span.end.offset < vari.span.end.offset)
     return;
@@ -827,6 +832,17 @@ var builtins = {
   string: {
     type: TYPE,
     impl: (s) => annot(s, STRING)
+  },
+  eq: {
+    type: parse("fn f => fn x y => (number (f x y))").ast,
+    impl: (x, y) => mknum(x == y ? 1 : 0)
+  },
+  ifelse: {
+    type: parse("fn f => fn T cond then else => (T (f (number cond) (T then) (T else)))").ast,
+    impl: (cond, then, els) => {
+      let val = cond.$ == "number" ? cond.content : cond.$ == "string" ? cond.content.length : 1;
+      return val ? then : els;
+    }
   }
 };
 var run = (ast) => {
@@ -852,26 +868,25 @@ var run = (ast) => {
         return ast2;
       }
       case "app": {
-        return mkapp(dedup(ast2.content.fn, env), ast2.content.args.map((arg) => dedup(arg, env)));
+        ast2.content.fn = dedup(ast2.content.fn, env);
+        ast2.content.args = ast2.content.args.map((arg) => dedup(arg, env));
+        return ast2;
       }
       case "function": {
         env = ast2.content.vars.reduce((e, v) => ({ name: v.content.name, value: v, next: e }), env);
-        return mkAst("function", {
-          vars: ast2.content.vars,
-          body: dedup(ast2.content.body, env)
-        }, ast2.span);
+        ast2.content.body = dedup(ast2.content.body, env);
+        return ast2;
       }
       case "let": {
         let value = dedup(ast2.content.value, env);
         env = { name: ast2.content.var.content.name, value, next: env };
-        return mkAst("let", {
-          var: ast2.content.var,
-          value,
-          body: dedup(ast2.content.body, env)
-        }, ast2.span);
+        ast2.content.value = dedup(value, env);
+        ast2.content.body = dedup(ast2.content.body, env);
+        return ast2;
       }
       case "record": {
-        return mkAst("record", ast2.content.map(([v, val]) => [v, dedup(val, env)]), ast2.span);
+        ast2.content = ast2.content.map(([v, val]) => [v, dedup(val, env)]);
+        return ast2;
       }
       default:
         return ast2;
@@ -900,9 +915,6 @@ var run = (ast) => {
           let def = builtins[ast2.content.name];
           return annot(ast2, def.type);
         }
-        let type = lookup(ast2.content.name, types);
-        if (type)
-          annot(ast2, type);
         let val = lookup(ast2.content.name, vals);
         if (val)
           return val;
@@ -911,15 +923,15 @@ var run = (ast) => {
       case "function": {
         let bod = go(ast2.content.body, vals, types);
         let fvar = mkvar(freename(vals));
-        if (bod.type) {
-          annot(ast2, mkAst("function", {
-            vars: [fvar],
-            body: mkAst("function", {
-              vars: ast2.content.vars,
-              body: mkapp(bod.type, [mkapp(fvar, ast2.content.vars.map((v) => v.type ? mkapp(v.type, [v]) : v))])
-            }, ast2.span)
-          }));
-        }
+        let ftype = mkAst("function", {
+          vars: [fvar],
+          body: mkAst("function", {
+            vars: ast2.content.vars,
+            body: bod.type ? mkapp(bod.type, [mkapp(fvar, ast2.content.vars.map((v) => v.type ? mkapp(v.type, [v]) : v))]) : mkapp(fvar, ast2.content.vars.map((v) => v.type ? mkapp(v.type, [v]) : v))
+          }, ast2.span)
+        });
+        annot(ast2, ftype);
+        ast2.content.env = vals;
         return ast2;
       }
       case "app": {
@@ -937,7 +949,21 @@ var run = (ast) => {
         if (fn.$ == "function") {
           if (fn.content.vars.length !== args.length)
             throw new Error(`Expected ${fn.content.vars.length} arguments, got ${args.length}`);
-          let vals2;
+          let bod = fn.content.body;
+          if (fn.content.env) {
+            let e = fn.content.env;
+            while (e) {
+              vals = { name: e.name, value: e.value, next: vals };
+              e = e.next;
+            }
+          }
+          for (let i = fn.content.vars.length - 1;i >= 0; i--) {
+            vals = { name: fn.content.vars[i].content.name, value: args[i], next: vals };
+          }
+          let res = go(bod, vals, types);
+          if (res.type)
+            annot(ast2, res.type);
+          return res;
         }
         return ast2;
       }
@@ -948,17 +974,20 @@ var run = (ast) => {
   return go(dedup(ast, null), null, null);
 };
 {
-  const assertEq = (expected, got, code) => {
-    if (prettyAST(expected) !== prettyAST(got)) {
+  const assertEq = (got, expected, code) => {
+    let A = expected ? prettyAST(expected) : "undefined";
+    let G = got ? prettyAST(got) : "undefined";
+    if (A !== G) {
       console.error(`Test failed for code: ${code}
-Expected: ${prettyAST(expected)}
-Got: ${prettyAST(got)}`);
+Expected: ${A}
+Got     : ${G}`);
     }
   };
   let x = mkvar("x");
   let ast = mkapp(NUMBER, [x]);
-  let res = run(ast);
+  run(ast);
   assertEq(x.type, NUMBER, "type of var in app");
+  assertEq(ast.type, NUMBER, "type of app");
   Object.entries({
     "22": "number",
     '"hello"': "string",
@@ -967,15 +996,15 @@ Got: ${prettyAST(got)}`);
     "(number x)": "number",
     "fn x => (number x)": "fn x0 => fn x => (number (x0 (number x)))"
   }).forEach(([code, expected]) => {
-    let ast2 = parse(code);
-    let res2 = run(ast2).type;
-    if (!res2) {
+    let ast2 = parse(code).ast;
+    let res = run(ast2).type;
+    if (!res) {
       console.error(`TYPE Test failed for code: ${code}
 Expected: ${expected}
 Got: no type`);
       return;
     }
-    assertEq(parse(expected), res2, `Type test for code: ${code}`);
+    assertEq(parse(expected).ast, res, `Type test for code: ${code}`);
   });
   Object.entries({
     "let x= 22 in x": "22",
@@ -984,33 +1013,29 @@ Got: no type`);
     "(fn x => x 33)": "33",
     "let f = fn x => x in (f 33)": "33",
     "(let f = fn x => x in f 33)": "33",
-    "(number 22)": "22"
+    "(number 22)": "22",
+    "(fn x => fn x => x 33)": "fn x=>x"
   }).forEach(([code, expected]) => {
-    let ast2 = parse(code);
-    let res2 = ast2;
+    let ast2 = parse(code).ast;
+    let res = ast2;
     try {
-      res2 = run(ast2);
+      res = run(ast2);
     } catch (e) {
       console.error(`Error running code: ${code}
 ${e instanceof Error ? e.message : String(e)}`);
       return;
     }
-    let expectedAst = parse(expected);
-    let outStr = prettyAST(res2);
-    let expectedStr = prettyAST(expectedAst);
-    if (prettyAST(res2) !== expected)
-      console.error(`Test failed for code: ${code}
-Expected: ${expectedStr}
-Got: ${outStr}`);
+    let expectedAst = parse(expected).ast;
+    assertEq(expectedAst, res, `Runtime test for code: ${code}`);
   });
   [
     "(string 22)"
   ].forEach((code) => {
     try {
-      let ast2 = parse(code);
-      let res2 = run(ast2);
+      let ast2 = parse(code).ast;
+      let res = run(ast2);
       console.error(`Test failed for code: ${code}
-Expected an error but got: ${prettyAST(res2)}`);
+Expected an error but got: ${prettyAST(res)}`);
     } catch (e) {}
   });
 }
@@ -1034,39 +1059,45 @@ var outview = html("pre")().style({
   paddingTop: "16px"
 });
 var ast;
+var currentAstMap = [];
+var code = "";
 var Edit = editor((s) => {
   try {
-    ast = parse(s);
+    let parsed = parse(s);
+    ast = parsed.ast;
+    currentAstMap = parsed.astmap;
+    code = s;
     let res = run(ast);
-    outview.el.textContent = prettyAST(ast);
+    outview.el.textContent = prettyAST(res);
   } catch (e) {
     ast = undefined;
+    currentAstMap = [];
     outview.el.textContent = e instanceof Error ? e.message : String(e);
   }
-}, () => ast ? astmap(ast) : [], (req) => {
-  console.log("got req", req);
+}, () => currentAstMap, (req) => {
   let def = req.$ == "var" ? getdef(ast, req) : undefined;
-  console.log("got def", def);
   if (def)
     Edit.setCursor({ row: def.span.start.line - 1, col: def.span.start.col - 1 });
-}, (ast2) => {
-  return ast2.$ + ": " + prettyAST(ast2.type ?? ANY);
+}, (node) => {
+  if (node.$ === "comment")
+    return;
+  return node.$ + ": " + (node.type ? prettyAST(node.type) : node.$ == "var" ? prettyAST(getdef(ast, node)?.type ?? ANY) : "XX");
 });
 body.style({
   padding: "44px",
   color: "white",
   backgroundColor: "black",
   fontFamily: "sans-serif"
-}).append(Edit.el, outview, span(" ⚙ about this", () => {
-  Edit.setText(`
+});
+var buttn = (t, onClick) => span(t, onClick).style({ color: "gray", border: "1px solid gray", borderRadius: "4px", padding: "2px 4px", marginRight: "8px" });
+var about_text = `
 // This is a toy code editor still in development.
 
 // the goal is to build a language with:
 
-
-// first class supportt for types as values
+// extremely minimal syntax
+// first class support for types as values
 // first cass LSP programng in a straightforward way.
-
 
 
 let x = (number 22) in
@@ -1088,10 +1119,5 @@ let str = {e: 44} in
 let str_e = (str {e}) in
 
 str_e
-
-
-
-`);
-}).style({ color: "gray", border: "1px solid gray", borderRadius: "4px", padding: "2px 4px" }), span("github", () => {
-  window.open("https://github.com/dkormann/myeditor");
-}).style({ color: "gray", border: "1px solid gray", borderRadius: "4px", padding: "2px 4px", marginLeft: "8px" }));
+`;
+body.append(Edit.el, outview, buttn("about", () => Edit.setText(about_text)), buttn("github", () => window.open("https://github.com/dkormann/myeditor")));

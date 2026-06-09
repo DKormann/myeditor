@@ -8,6 +8,7 @@ The main goal is to bring zig's comptime capabilities to a scripting language.
 also if possible I want to make the code linter programmable in a very straightforward way.
 
 
+
 ## development
 
 this uses bun as a terminal runtime; no package manager; no bundler!

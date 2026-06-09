@@ -1,7 +1,7 @@
 import { body, html, span , fromHTML} from "./html";
 import { editor } from "./editor";
-import { children, parse, prettyAST, type AST, type Span } from "./parser";
-import { astmap, getdef } from "./lsp"
+import { parse, prettyAST, type AST, type Span, type SyntaxNode } from "./parser";
+import { getdef } from "./lsp"
 import { run, ANY } from "./runtime"
 
 
@@ -24,28 +24,35 @@ let outview = html('pre')().style({
 })
 
 let ast: AST | undefined
+let currentAstMap: (SyntaxNode | undefined)[] = []
 
+
+let code:string = ''
 
 let Edit = editor(s=> {
     try{
-      ast = parse(s)
+      let parsed = parse(s)
+      ast = parsed.ast
+      currentAstMap = parsed.astmap
+      code = s
       let res = run(ast)
-      outview.el.textContent = prettyAST(ast)
+      outview.el.textContent = prettyAST(res)
 
     }catch(e){
       ast = undefined
+      currentAstMap = []
       outview.el.textContent = e instanceof Error ? e.message : String(e)
     }
   },
-  ()=> ast ? astmap(ast) : [],
+  ()=> currentAstMap,
   (req) => {
-    console.log("got req", req)
     let def = req.$ == "var" ? getdef(ast!, req) : undefined
-    console.log("got def", def)
     if (def) Edit.setCursor({row: def.span.start.line-1, col: def.span.start.col-1})
   },
-  (ast) => {
-    return ast.$ + ": " + prettyAST(ast.type ?? ANY)
+  (node) => {
+    if (node.$ === "comment") return undefined
+
+    return node.$ + ": " + (node.type ? prettyAST(node.type) : (node.$ == "var" ? prettyAST(getdef(ast!, node)?.type ?? ANY) : "XX"))
   }
 )
 
@@ -57,23 +64,16 @@ body.style({
 })
 
 
+let buttn = (t:string, onClick:() => void) => span(t, onClick).style({color: "gray", border: "1px solid gray", borderRadius: "4px", padding: "2px 4px", marginRight: "8px"})
 
-
-
-.append(
-  Edit.el,
-  outview,
-
-  span(" ⚙ about this", ()=>{
-    Edit.setText(`
+let about_text = `
 // This is a toy code editor still in development.
 
 // the goal is to build a language with:
 
-
-// first class supportt for types as values
+// extremely minimal syntax
+// first class support for types as values
 // first cass LSP programng in a straightforward way.
-
 
 
 let x = (number 22) in
@@ -95,16 +95,15 @@ let str = {e: 44} in
 let str_e = (str {e}) in
 
 str_e
+`
 
-
-
-`)
-
-  })
-  .style({ color: "gray", border: "1px solid gray", borderRadius: "4px", padding: "2px 4px", }),
-  span("github", ()=>{
-    window.open("https://github.com/dkormann/myeditor")
-  })
-  .style({ color: "gray", border: "1px solid gray", borderRadius: "4px", padding: "2px 4px", marginLeft: "8px" }),
-
+body.append(
+  Edit.el,
+  outview,
+  buttn("about", () => Edit.setText(about_text)),
+  buttn("github", () => window.open("https://github.com/dkormann/myeditor"))
 )
+
+
+
+

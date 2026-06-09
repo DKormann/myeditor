@@ -1,5 +1,5 @@
 
-import {type AST} from "./parser"
+import {mknum, Tag, type AST} from "./parser"
 import {parse, prettyAST, mkAst, mkvar, mkapp, mkfun, mklet, Var} from "./parser"
 
 let annot = (ast: AST, type: AST): AST => {
@@ -15,6 +15,7 @@ let annot = (ast: AST, type: AST): AST => {
 export let NUMBER : AST = mkvar("number")
 export let STRING : AST = mkvar("string")
 export let TYPE : AST = mkvar("type")
+
 NUMBER.type = TYPE
 STRING.type = TYPE
 TYPE.type = TYPE
@@ -33,12 +34,26 @@ let builtins: Record<string, {
   "string": {
     type: TYPE,
     impl: (s)=> annot(s, STRING)
+  },
+  "eq": {
+    type: parse("fn f => fn x y => (number (f x y))").ast!,
+    impl: (x,y) => mknum(x == y ? 1 : 0)
+  },
+  "ifelse" : {
+    type: parse("fn f => fn T cond then else => (T (f (number cond) (T then) (T else)))").ast!,
+    impl: (cond, then, els) => {
+      let val = cond.$ == "number" ? cond.content : cond.$ == "string" ? cond.content.length : 1
+      return val ? then : els
+    }
   }
+
 }
 
 
 
-type Env = {
+
+
+export type Env = {
   name: string,
   value: AST
   next: Env
@@ -66,30 +81,28 @@ export const run = (ast: AST): AST => {
         return ast
       }
       case "app": {
-        return mkapp(dedup(ast.content.fn, env), ast.content.args.map(arg => dedup(arg, env)))
+        ast.content.fn = dedup(ast.content.fn, env)
+        ast.content.args = ast.content.args.map(arg => dedup(arg, env))
+        return ast
       }
       case "function": {
         env = ast.content.vars.reduce((e, v) => ({name: v.content.name, value: v, next: e}), env)
-        return mkAst("function", {
-          vars: ast.content.vars,
-          body: dedup(ast.content.body, env)
-        }, ast.span)
+        ast.content.body = dedup(ast.content.body, env)
+        return ast
       }
       case "let": {
         let value = dedup(ast.content.value, env)
         env = {name: ast.content.var.content.name, value, next: env}
-        return mkAst("let", {
-          var: ast.content.var,
-          value,
-          body: dedup(ast.content.body, env)
-        }, ast.span)
+        ast.content.value = dedup(value, env)
+        ast.content.body = dedup(ast.content.body, env)
+        return ast
       }
       case "record" :{
-        return mkAst("record", ast.content.map(([v, val])=> [v, dedup(val, env)] as [Var, AST]), ast.span)
+        ast.content = ast.content.map(([v, val])=> [v, dedup(val, env)] as [Var, AST])
+        return ast
       }
       default: return ast
     }
-
   }
 
   const go = (ast: AST, vals: Env, types: Env): AST => {
@@ -114,28 +127,27 @@ export const run = (ast: AST): AST => {
           let def = builtins[ast.content.name]
           return annot(ast, def.type)
         }
-        let type = lookup(ast.content.name, types)
-        if (type) annot(ast,type)
         let val = lookup(ast.content.name, vals)
         if (val) return val
         return ast
       }
 
       case "function": {
+
         let bod = go(ast.content.body, vals, types)
         let fvar = mkvar(freename(vals))
-        if (bod.type) {
-          annot(
-            ast,
-            mkAst("function", {
-              vars: [fvar],
-              body: mkAst("function", {
-                vars: ast.content.vars,
-                body: mkapp(bod.type, [mkapp(fvar, ast.content.vars.map(v=> v.type ? mkapp(v.type, [v]) : v))])
-              }, ast.span)
-            })
-          )
-        }
+        let ftype = mkAst("function", {
+            vars: [fvar],
+            body: mkAst("function", {
+              vars: ast.content.vars,
+              body: bod.type ?
+                mkapp(bod.type, [mkapp(fvar, ast.content.vars.map(v=> v.type ? mkapp(v.type, [v]) : v))])
+                : mkapp(fvar, ast.content.vars.map(v=> v.type ? mkapp(v.type, [v]) : v))
+            }, ast.span)
+          });
+        
+        annot(ast,ftype)
+        ast.content.env = vals
         return ast
       }
 
@@ -145,14 +157,30 @@ export const run = (ast: AST): AST => {
         if (fn.$ == "var" && builtins[fn.content.name]) {
           let def = builtins[fn.content.name]
           let res = def.impl(...args)
+
           if (res.type) annot(ast, res.type)
           return res
         }
         if (args.some(a=>a.$ == "var")) return ast
         if (fn.$ == "function"){
           if (fn.content.vars.length !== args.length) throw new Error(`Expected ${fn.content.vars.length} arguments, got ${args.length}`)
-          // console.warn(`Function: ${prettyAST(fn)}`)
-          let vals
+
+          let bod = fn.content.body
+          if (fn.content.env) {
+            let e: Env = fn.content.env
+            while (e){
+              vals = {name: e.name, value: e.value, next: vals}
+              e = e.next
+            }
+          }
+
+          for (let i = fn.content.vars.length-1; i >= 0; i--){
+            vals = {name: fn.content.vars[i].content.name, value: args[i], next: vals}
+          }
+
+          let res = go(bod, vals, types)
+          if (res.type) annot(ast, res.type)
+          return res
         }
         return ast
       }
@@ -168,17 +196,23 @@ export const run = (ast: AST): AST => {
 
 {
 
-  const assertEq = (expected: AST, got: AST, code: string) => {
-    if (prettyAST(expected) !== prettyAST(got)) {
-      console.error(`Test failed for code: ${code}\nExpected: ${prettyAST(expected)}\nGot: ${prettyAST(got)}`)
+  const assertEq = (got: AST | undefined, expected: AST| undefined, code: string) => {
+
+
+    let A = expected ? prettyAST(expected) : "undefined"
+    let G = got ? prettyAST(got) : "undefined"
+
+    if (A !== G) {
+      console.error(`Test failed for code: ${code}\nExpected: ${A}\nGot     : ${G}`)
     }
   }
 
 
   let x = mkvar("x")
   let ast = mkapp(NUMBER, [x])
-  let res = run(ast)
-  assertEq(x.type!, NUMBER, "type of var in app")
+  run(ast)
+  assertEq(x.type, NUMBER, "type of var in app")
+  assertEq(ast.type, NUMBER, "type of app")
 
 
   Object.entries({
@@ -189,13 +223,13 @@ export const run = (ast: AST): AST => {
     "(number x)": "number",
     "fn x => (number x)": "fn x0 => fn x => (number (x0 (number x)))",
   }).forEach(([code, expected])=>{
-    let ast = parse(code)
+    let ast = parse(code).ast
     let res = run(ast).type
     if (!res) {
       console.error(`TYPE Test failed for code: ${code}\nExpected: ${expected}\nGot: no type`)
       return
     }
-    assertEq(parse(expected), res, `Type test for code: ${code}`)
+    assertEq(parse(expected).ast, res, `Type test for code: ${code}`)
   })
 
   Object.entries({
@@ -206,9 +240,13 @@ export const run = (ast: AST): AST => {
     "let f = fn x => x in (f 33)": "33",
     "(let f = fn x => x in f 33)": "33",
     "(number 22)": "22",
+    "(fn x => fn x => x 33)" : "fn x=>x",
+    // "((fn x => fn y => x 22) 33)" : "22",
+    // "((fn x => fn y => y 22) 33)" : "33",
+    // "((fn x => fn x => x 22) 33)" : "33",
 
   }).forEach(([code, expected])=>{
-    let ast = parse(code)
+    let ast = parse(code).ast
     let res = ast
     try{
       res = run(ast)
@@ -216,22 +254,18 @@ export const run = (ast: AST): AST => {
       console.error(`Error running code: ${code}\n${e instanceof Error ? e.message : String(e)}`)
       return
     }
-    let expectedAst = parse(expected)
-    let outStr = prettyAST(res)
-    let expectedStr = prettyAST(expectedAst)
-    if (prettyAST(res) !== expected)
-      console.error(`Test failed for code: ${code}\nExpected: ${expectedStr}\nGot: ${outStr}`)
+    let expectedAst = parse(expected).ast
+    assertEq(expectedAst, res, `Runtime test for code: ${code}`)
   });
 
   [
     "(string 22)",
   ].forEach(code => {
     try{
-      let ast = parse(code)
+      let ast = parse(code).ast
       let res = run(ast)
       console.error(`Test failed for code: ${code}\nExpected an error but got: ${prettyAST(res)}`)
     }catch(e){}
   })
 
 }
-
