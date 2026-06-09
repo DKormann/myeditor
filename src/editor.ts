@@ -23,11 +23,7 @@ export const editor = (oninput: (s:string)=>void,
 
 ) => {
 
-  let lines = localStorage.getItem("lines")?.split("\n") ?? `
-let x = 22 :: @number in
-let y = 33 :: @number in
-(@add x y)
-`.split("\n")
+  let lines = localStorage.getItem("lines")?.split("\n") ?? [""]
   let cursor : Pos & {selection? : Pos} = {col:0, row:0};
 
   let el = html("pre")()

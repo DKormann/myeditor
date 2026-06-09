@@ -66,12 +66,7 @@ var colorOf = (node) => {
 };
 var editor = (oninput, getAstMap, goToDef, hoverInfo) => {
   let lines = localStorage.getItem("lines")?.split(`
-`) ?? `
-let x = 22 :: @number in
-let y = 33 :: @number in
-(@add x y)
-`.split(`
-`);
+`) ?? [""];
   let cursor = { col: 0, row: 0 };
   let el = html("pre")().style({
     userSelect: "none",
