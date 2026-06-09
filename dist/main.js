@@ -60,7 +60,7 @@ var colorOf = (node) => {
     return "#50e37c";
   return "#ffffff";
 };
-var editor = (oninput, getAstMap, goToDef) => {
+var editor = (oninput, getAstMap, goToDef, hoverInfo) => {
   let lines = localStorage.getItem("lines")?.split(`
 `) ?? `
 let x = 22 :: @number in
@@ -70,7 +70,8 @@ let y = 33 :: @number in
 `);
   let cursor = { col: 0, row: 0 };
   let el = html("pre")().style({
-    userSelect: "none"
+    userSelect: "none",
+    cursor: "text"
   });
   let hist = [];
   let elements = new WeakMap;
@@ -88,7 +89,7 @@ let y = 33 :: @number in
   const render = () => {
     let code = lines.join(`
 `);
-    let scol = Math.min(cursor.col, lines[cursor.row].length);
+    let scol = Math.min(cursor.col, lines[cursor.row]?.length ?? 0);
     let chars = [];
     let mkcolor = () => {
       chars.forEach((c, i) => {
@@ -264,14 +265,53 @@ let y = 33 :: @number in
     }
   });
   window.addEventListener("mouseover", (e) => {
-    if (!mousedown)
-      return;
-    if (elements.has(e.target)) {
-      let pos = elements.get(e.target).pos;
-      cursor.selection = cursor.selection || { row: cursor.row, col: cursor.col };
-      cursor.row = pos.row;
-      cursor.col = pos.col;
-      render();
+    if (mousedown) {
+      if (elements.has(e.target)) {
+        let pos = elements.get(e.target).pos;
+        cursor.selection = cursor.selection || { row: cursor.row, col: cursor.col };
+        cursor.row = pos.row;
+        cursor.col = pos.col;
+        render();
+      }
+    } else {
+      let ast = elements.get(e.target)?.ast;
+      if (ast) {
+        let info = hoverInfo(ast);
+        if (info) {
+          let tooltip = div(info).style({
+            position: "fixed",
+            left: e.clientX + "px",
+            bottom: window.innerHeight - e.clientY + 10 + "px",
+            backgroundColor: "#0a0a0a",
+            color: "rgb(200, 200, 234)",
+            border: "1px solid #ffffff55",
+            padding: "8px 12px",
+            borderRadius: "4px",
+            pointerEvents: "none",
+            zIndex: "1000",
+            whiteSpace: "pre"
+          });
+          document.body.appendChild(tooltip.el);
+          let remove = () => {
+            tooltip.el.remove();
+            window.removeEventListener("mousemove", move);
+            window.removeEventListener("mouseout", out);
+          };
+          let move = (e2) => {
+            tooltip.style({
+              left: e2.clientX + "px",
+              bottom: window.innerHeight - e2.clientY + 10 + "px"
+            });
+          };
+          let out = (e2) => {
+            if (e2.relatedTarget === tooltip.el)
+              return;
+            remove();
+          };
+          window.addEventListener("mousemove", move);
+          window.addEventListener("mouseout", out);
+        }
+      }
     }
   });
   window.addEventListener("mouseup", (e) => {
@@ -736,6 +776,8 @@ var Edit = editor((s) => {
   console.log("got def", def);
   if (def)
     Edit.setCursor({ row: def.span.start.line - 1, col: def.span.start.col - 1 });
+}, (ast2) => {
+  return prettyAST(ast2);
 });
 body.style({
   padding: "44px",
@@ -761,7 +803,7 @@ let u = (string "hllo") in
 let r = {x:22} in
 
 let id = fn x=> x in
-let id_tye = fn f => fn x =>(number (f (number x))) in
+let id_type = fn f => fn x =>(number (f (number x))) in
 let typed_id = (id_type id) in
 
 

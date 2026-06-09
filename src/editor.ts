@@ -4,10 +4,8 @@ import { Span, type AST } from "./parser"
 
 type Pos = { col: number, row: number }
 
-
 const colorOf = (node: AST | undefined): string => {
   if (node == undefined) return "#848484"
-
   if (node.$ === "number" || node.$ === "string" || node.$ ==  "builtin") return "#d3af21"
   if (node.$ === "var") return "#f983ef"
   if (node.$ === "let" || node.$ == "function" || node.$ == "annot") return "#5b8fff"
@@ -16,8 +14,12 @@ const colorOf = (node: AST | undefined): string => {
 }
 
 
+export const editor = (oninput: (s:string)=>void,
+  getAstMap : ()=> (AST|undefined)[],
+  goToDef : (ast:AST) => void,
+  hoverInfo: (ast: AST) => string | undefined,
 
-export const editor = (oninput: (s:string)=>void, getAstMap : ()=> (AST|undefined)[], goToDef : (ast:AST) => void ) => {
+) => {
 
   let lines = localStorage.getItem("lines")?.split("\n") ?? `
 let x = 22 :: @number in
@@ -29,6 +31,7 @@ let y = 33 :: @number in
   let el = html("pre")()
   .style({
     userSelect: "none",
+    cursor: "text",
   })
 
 
@@ -47,7 +50,7 @@ let y = 33 :: @number in
 
   const render = () => {
     let code = lines.join("\n")
-    let scol = Math.min(cursor.col, lines[cursor.row].length)
+    let scol = Math.min(cursor.col, lines[cursor.row]?.length ?? 0)
 
     let chars: HTMLElement[] = []
 
@@ -237,15 +240,52 @@ let y = 33 :: @number in
   })
 
   window.addEventListener("mouseover", e=>{
-    if (!mousedown) return
-    if (elements.has(e.target as HTMLElement)){
-      let pos = elements.get(e.target as HTMLElement)!.pos
-      cursor.selection = cursor.selection || {row: cursor.row, col: cursor.col}
-      cursor.row = pos.row
-      cursor.col = pos.col
-
-      render()
-
+    if (mousedown) {
+      if (elements.has(e.target as HTMLElement)){
+        let pos = elements.get(e.target as HTMLElement)!.pos
+        cursor.selection = cursor.selection || {row: cursor.row, col: cursor.col}
+        cursor.row = pos.row
+        cursor.col = pos.col
+        render()
+      }
+    }else{
+      let ast = elements.get(e.target as HTMLElement)?.ast
+      if (ast) {
+        let info = hoverInfo(ast)
+        if (info) {
+          let tooltip = div(info).style({
+            position: "fixed",
+            left: e.clientX + "px",
+            bottom: (window.innerHeight - e.clientY + 10) + "px",
+            backgroundColor: "#0a0a0a",
+            color: "rgb(200, 200, 234)",
+            border: "1px solid #ffffff55",
+            padding: "8px 12px",
+            borderRadius: "4px",
+            pointerEvents: "none",
+            zIndex: "1000",
+            whiteSpace: "pre",
+          })
+          document.body.appendChild(tooltip.el)
+          let remove = () => {
+            tooltip.el.remove()
+            window.removeEventListener("mousemove", move)
+            window.removeEventListener("mouseout", out)
+          }
+          let move = (e: MouseEvent) => {
+            tooltip.style({
+              left: e.clientX + "px",
+              bottom: (window.innerHeight - e.clientY + 10) + "px",
+            })
+          }
+          let out = (e: MouseEvent) => {
+            if (e.relatedTarget === tooltip.el) return
+            remove()
+          }
+          window.addEventListener("mousemove", move)
+          window.addEventListener("mouseout", out)
+        }
+      }
     }
   })
 

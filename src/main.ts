@@ -40,6 +40,9 @@ let Edit = editor(s=> {
     let def = req.$ == "var" ? getdef(ast!, req) : undefined
     console.log("got def", def)
     if (def) Edit.setCursor({row: def.span.start.line-1, col: def.span.start.col-1})
+  },
+  (ast) => {
+    return prettyAST(ast)
   }
 )
 
@@ -77,7 +80,7 @@ let u = (string "hllo") in
 let r = {x:22} in
 
 let id = fn x=> x in
-let id_tye = fn f => fn x =>(number (f (number x))) in
+let id_type = fn f => fn x =>(number (f (number x))) in
 let typed_id = (id_type id) in
 
 
