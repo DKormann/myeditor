@@ -1,5 +1,6 @@
 import { AST, Var } from "./parser"
 import { parse } from "./parser"
+import {run} from "./runtime"
 import {children} from "./parser"
 
 
@@ -32,12 +33,4 @@ export const getdef = (root: AST, vari: Var): AST | undefined => {
     for (let v of root.content.vars)
       if (v.content.name === vari.content.name)
         return v
-
-
 }
-
-// {
-//   let ast = parse("let x = 2 in x")
-//   console.log(ast)
-//   console.log(astmap(ast).map(n=> n ? n.$ : " ").join("\n"))
-// }

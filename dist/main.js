@@ -50,11 +50,11 @@ var button = html("button");
 var colorOf = (node) => {
   if (node == undefined)
     return "#848484";
-  if (node.$ === "number" || node.$ === "string" || node.$ == "builtin")
+  if (node.$ === "number" || node.$ === "string")
     return "#d3af21";
   if (node.$ === "var")
     return "#f983ef";
-  if (node.$ === "let" || node.$ == "function" || node.$ == "annot")
+  if (node.$ === "let" || node.$ == "function")
     return "#5b8fff";
   if (node.$ === "app")
     return "#50e37c";
@@ -81,6 +81,10 @@ let y = 33 :: @number in
   let selrange = () => {
     if (!cursor.selection)
       return;
+    if (cursor.row == cursor.selection.row && cursor.col == cursor.selection.col) {
+      cursor.selection = undefined;
+      return;
+    }
     if (plesseq(cursor, cursor.selection))
       return [cursor, cursor.selection];
     else
@@ -298,6 +302,8 @@ let y = 33 :: @number in
             window.removeEventListener("mouseout", out);
           };
           let move = (e2) => {
+            if (e2.metaKey)
+              return remove();
             tooltip.style({
               left: e2.clientX + "px",
               bottom: window.innerHeight - e2.clientY + 10 + "px"
@@ -340,8 +346,6 @@ var prettyAST = (node) => {
       return node.content.toString();
     case "string":
       return JSON.stringify(node.content);
-    case "builtin":
-      return node.content;
     case "var":
       return node.content.name;
     case "let":
@@ -351,10 +355,10 @@ ${prettyAST(node.content.body)}`;
       return `fn ${node.content.vars.map((v) => v.content.name).join(" ")} => ${prettyAST(node.content.body)}`;
     case "app":
       return `(${prettyAST(node.content.fn)} ${node.content.args.map(prettyAST).join(" ")})`;
-    case "annot":
-      return `${prettyAST(node.content.value)} :: ${prettyAST(node.content.type)}`;
     case "record":
       return `{${node.content.map(([k, v]) => `${k.content.name}: ${prettyAST(v)}`).join(", ")}}`;
+    case "error":
+      return `[ERROR: ${node.content.message}]`;
   }
 };
 var zeroPos = () => ({ offset: 0, line: 1, col: 1 });
@@ -397,48 +401,33 @@ var tokenize = (code) => {
         advance();
       continue;
     }
-    if (char === ":" && code[i + 1] === ":") {
-      let start = pos();
-      advance();
-      advance();
-      push({ type: "annot" }, start);
-      continue;
-    }
     if (char === "=" && code[i + 1] === ">") {
-      let start = pos();
+      let start2 = pos();
       advance();
       advance();
-      push({ type: "arrow" }, start);
+      push({ type: "arrow" }, start2);
       continue;
     }
     if ("(){}=,:".includes(char)) {
-      let start = pos();
+      let start2 = pos();
       let value = char;
       advance();
-      push({ type: "symbol", value }, start);
-      continue;
-    }
-    if (char === "@") {
-      let start = pos();
-      advance();
-      let valueStart = i;
-      while (i < code.length && isIdent(code[i]))
-        advance();
-      if (valueStart === i)
-        throw new Error("Expected builtin name after @");
-      push({ type: "builtin", value: code.slice(valueStart, i) }, start);
+      push({ type: "symbol", value }, start2);
       continue;
     }
     if (char === '"') {
-      let start = pos();
+      let start2 = pos();
       advance();
       let value = "";
       while (i < code.length) {
         let current = code[i];
         if (current === "\\") {
           let next = code[i + 1];
-          if (next === undefined)
-            throw new Error("Unterminated string escape");
+          if (next === undefined) {
+            advance();
+            push({ type: "error", message: "Unterminated string escape", content: code.slice(start2.offset, i) }, start2);
+            return { tokens, eof: pos() };
+          }
           let escaped = { n: `
 `, r: "\r", t: "\t", '"': '"', "\\": "\\" }[next];
           value += escaped ?? next;
@@ -451,47 +440,58 @@ var tokenize = (code) => {
         value += current;
         advance();
       }
-      if (code[i] !== '"')
-        throw new Error("Unterminated string literal");
+      if (code[i] !== '"') {
+        push({ type: "error", message: "Unterminated string literal", content: code.slice(start2.offset, i) }, start2);
+        return { tokens, eof: pos() };
+      }
       advance();
-      push({ type: "string", value }, start);
+      push({ type: "string", value }, start2);
       continue;
     }
     if (isDigit(char)) {
-      let start = pos();
+      let start2 = pos();
       let valueStart = i;
       while (i < code.length && isDigit(code[i]))
         advance();
-      push({ type: "number", value: Number(code.slice(valueStart, i)) }, start);
+      push({ type: "number", value: Number(code.slice(valueStart, i)) }, start2);
       continue;
     }
     if (isAlpha(char)) {
-      let start = pos();
+      let start2 = pos();
       let valueStart = i;
       while (i < code.length && isIdent(code[i]))
         advance();
       let value = code.slice(valueStart, i);
       if (value === "let" || value === "in" || value === "fn")
-        push({ type: "keyword", value }, start);
+        push({ type: "keyword", value }, start2);
       else
-        push({ type: "ident", value }, start);
+        push({ type: "ident", value }, start2);
       continue;
     }
-    throw new Error(`Unexpected character: ${char}`);
+    let start = pos();
+    advance();
+    push({ type: "error", message: `Unexpected character: ${char}`, content: char }, start);
   }
-  return tokens;
+  return { tokens, eof: pos() };
 };
 
 class Parser {
   tokens;
+  source;
+  eof;
   i = 0;
-  constructor(tokens) {
+  constructor(tokens, source, eof) {
     this.tokens = tokens;
+    this.source = source;
+    this.eof = eof;
   }
   parse() {
     let ast = this.parseExpr();
-    if (this.peek())
-      throw new Error(`Unexpected token at end: ${this.describe(this.peek())}`);
+    if (this.peek()) {
+      let start = this.peek().span.start;
+      let end = this.tokens[this.tokens.length - 1]?.span.end ?? start;
+      return this.errorNode("Unexpected extra input after expression", { start, end }, this.source.slice(start.offset, end.offset));
+    }
     return ast;
   }
   parseExpr() {
@@ -499,16 +499,29 @@ class Parser {
       return this.parseLet();
     if (this.isKeyword("fn"))
       return this.parseFunction();
-    return this.parseAnnot();
+    return this.parseAtom();
   }
   parseLet() {
     let start = this.expectKeyword("let").span.start;
-    let name = this.expectToken("ident");
-    this.expectSymbol("=");
-    let value = this.parseExpr();
-    this.expectKeyword("in");
-    let body2 = this.parseExpr();
-    return mkAst("let", { var: mkAst("var", { name: name.value }, name.span), value, body: body2 }, { start, end: body2.span.end });
+    let name = this.matchToken("ident");
+    if (!name)
+      return this.errorHere("Expected identifier after let", start);
+    let variable = mkAst("var", { name: name.value }, name.span);
+    let value;
+    if (this.isSymbol("=")) {
+      this.expectSymbol("=");
+      value = this.parseExpr();
+    } else {
+      value = this.peek() ? this.wrapError("Expected '=' after let binding name", this.parseExpr()) : this.errorHere("Expected '=' after let binding name");
+    }
+    let body2;
+    if (this.isKeyword("in")) {
+      this.expectKeyword("in");
+      body2 = this.parseExpr();
+    } else {
+      body2 = this.peek() ? this.wrapError("Expected keyword in after let binding", this.parseExpr()) : this.errorHere("Expected keyword in after let binding");
+    }
+    return mkAst("let", { var: variable, value, body: body2 }, { start, end: body2.span.end });
   }
   parseFunction() {
     let start = this.expectKeyword("fn").span.start;
@@ -517,32 +530,26 @@ class Parser {
       let ident = this.expectToken("ident");
       vars.push(mkAst("var", { name: ident.value }, ident.span));
     }
-    if (vars.length === 0)
-      throw new Error("Function requires at least one parameter");
-    this.expectArrow();
-    let body2 = this.parseExpr();
-    return mkAst("function", { vars, body: body2 }, { start, end: body2.span.end });
-  }
-  parseAnnot() {
-    let value = this.parseAtom();
-    while (this.peek()?.type === "annot") {
-      this.expectToken("annot");
-      let type = this.parseExpr();
-      value = mkAst("annot", { type, value }, { start: value.span.start, end: type.span.end });
+    let body2;
+    if (vars.length === 0) {
+      if (this.matchToken("arrow"))
+        body2 = this.wrapError("Function requires at least one parameter", this.parseExpr());
+      else
+        body2 = this.peek() ? this.wrapError("Function requires at least one parameter", this.parseExpr()) : this.errorHere("Function requires at least one parameter", start);
+    } else if (!this.matchToken("arrow")) {
+      body2 = this.peek() ? this.wrapError("Expected '=>' after function parameters", this.parseExpr()) : this.errorHere("Expected '=>' after function parameters");
+    } else {
+      body2 = this.parseExpr();
     }
-    return value;
+    return mkAst("function", { vars, body: body2 }, { start, end: body2.span.end });
   }
   parseAtom() {
     let token = this.peek();
     if (!token)
-      throw new Error("Unexpected end of input");
+      return this.errorHere("Unexpected end of input");
     if (token.type === "ident") {
       this.i++;
       return mkAst("var", { name: token.value }, token.span);
-    }
-    if (token.type === "builtin") {
-      this.i++;
-      return mkAst("builtin", token.value, token.span);
     }
     if (token.type === "number") {
       this.i++;
@@ -552,23 +559,30 @@ class Parser {
       this.i++;
       return mkAst("string", token.value, token.span);
     }
+    if (token.type === "error") {
+      this.i++;
+      return mkAst("error", { message: token.message, content: token.content }, token.span);
+    }
     if (this.isSymbol("("))
       return this.parseParens();
     if (this.isSymbol("{"))
       return this.parseRecord();
-    throw new Error(`Unexpected token: ${this.describe(token)}`);
+    this.i++;
+    return this.errorNode(`Unexpected token: ${this.describe(token)}`, token.span);
   }
   parseParens() {
     let open = this.expectSymbol("(");
     let items = [];
     while (!this.isSymbol(")")) {
-      if (!this.peek())
-        throw new Error("Unterminated parenthesized expression");
+      if (!this.peek()) {
+        let end = items.at(-1)?.span.end ?? open.span.end;
+        return this.errorNode("Unterminated parenthesized expression", { start: open.span.start, end }, this.source.slice(open.span.start.offset, end.offset));
+      }
       items.push(this.parseExpr());
     }
     let close = this.expectSymbol(")");
     if (items.length === 0)
-      throw new Error("Empty parentheses are not allowed");
+      return this.errorNode("Empty parentheses are not allowed", { start: open.span.start, end: close.span.end }, this.source.slice(open.span.start.offset, close.span.end.offset));
     if (items.length === 1)
       return items[0];
     return mkAst("app", { fn: items[0], args: items.slice(1) }, { start: open.span.start, end: close.span.end });
@@ -577,14 +591,27 @@ class Parser {
     let open = this.expectSymbol("{");
     let fields = [];
     while (!this.isSymbol("}")) {
-      let name = this.expectToken("ident");
+      if (!this.peek()) {
+        let end = fields.at(-1)?.[1].span.end ?? open.span.end;
+        return this.errorNode("Unterminated record", { start: open.span.start, end }, this.source.slice(open.span.start.offset, end.offset));
+      }
+      let name = this.matchToken("ident");
+      if (!name) {
+        let token = this.peek();
+        this.i++;
+        return this.errorNode(`Expected record field name, got ${this.describe(token)}`, { start: open.span.start, end: token.span.end }, this.source.slice(open.span.start.offset, token.span.end.offset));
+      }
       let key = mkAst("var", { name: name.value }, name.span);
-      let value = this.isSymbol(":") ? (this.expectSymbol(":"), this.parseExpr()) : key;
+      let value = this.isSymbol(":") ? (this.expectSymbol(":"), this.isSymbol("}") ? this.errorHere("Expected record field value after ':'") : this.parseExpr()) : key;
       fields.push([key, value]);
       if (this.isSymbol(","))
         this.i++;
       else
         break;
+    }
+    if (!this.isSymbol("}")) {
+      let end = fields.at(-1)?.[1].span.end ?? open.span.end;
+      return this.errorNode("Unterminated record", { start: open.span.start, end }, this.source.slice(open.span.start.offset, end.offset));
     }
     let close = this.expectSymbol("}");
     return mkAst("record", fields, { start: open.span.start, end: close.span.end });
@@ -604,6 +631,13 @@ class Parser {
     let token = this.peek();
     if (!token || token.type !== type)
       throw new Error(`Expected ${type}, got ${this.describe(token)}`);
+    this.i++;
+    return token;
+  }
+  matchToken(type) {
+    let token = this.peek();
+    if (!token || token.type !== type)
+      return;
     this.i++;
     return token;
   }
@@ -632,10 +666,32 @@ class Parser {
       return "end of input";
     if ("value" in token)
       return `${token.type}(${String(token.value)})`;
+    if (token.type === "error")
+      return `error(${token.message})`;
     return token.type;
   }
+  errorNode(message, span2, content) {
+    let finalSpan = span2 ?? this.pointSpan();
+    return mkAst("error", { message, content: content ?? this.source.slice(finalSpan.start.offset, finalSpan.end.offset) }, finalSpan);
+  }
+  errorHere(message, start) {
+    let span2 = this.peek()?.span ?? { start: this.eof, end: this.eof };
+    return this.errorNode(message, { start: start ?? span2.start, end: span2.end });
+  }
+  wrapError(message, node) {
+    return this.errorNode(message, node.span, this.source.slice(node.span.start.offset, node.span.end.offset));
+  }
+  pointSpan() {
+    let token = this.peek();
+    if (token)
+      return token.span;
+    return { start: this.eof, end: this.eof };
+  }
 }
-var parse = (code) => new Parser(tokenize(code)).parse();
+var parse = (code) => {
+  let { tokens, eof } = tokenize(code);
+  return new Parser(tokens, code, eof).parse();
+};
 var children = (node) => {
   if (node.$ === "function")
     return [...node.content.vars, node.content.body];
@@ -643,8 +699,6 @@ var children = (node) => {
     return [node.content.fn, ...node.content.args];
   if (node.$ === "let")
     return [node.content.var, node.content.value, node.content.body];
-  if (node.$ === "annot")
-    return [node.content.value, node.content.type];
   if (node.$ === "record")
     return node.content.flatMap(([key, value]) => [key, value]);
   return [];
@@ -656,10 +710,10 @@ var stripSpans = (ast) => {
     return { $: ast.$, content: { fn: stripSpans(ast.content.fn), args: ast.content.args.map(stripSpans) } };
   if (ast.$ === "let")
     return { $: ast.$, content: { var: stripSpans(ast.content.var), value: stripSpans(ast.content.value), body: stripSpans(ast.content.body) } };
-  if (ast.$ === "annot")
-    return { $: ast.$, content: { type: stripSpans(ast.content.type), value: stripSpans(ast.content.value) } };
   if (ast.$ === "record")
     return { $: ast.$, content: ast.content.map(([name, value]) => [stripSpans(name), stripSpans(value)]) };
+  if (ast.$ === "error")
+    return { $: ast.$, content: ast.content };
   return { $: ast.$, content: ast.content };
 };
 var stringify = (x) => JSON.stringify(x, null, 2);
@@ -679,7 +733,7 @@ var test_span = (code, expected) => {
     console.error("Expected:", expected);
     console.error("Got:", ast.span);
     throw new Error(`Span test failed for code: ${code}`);
-  } else {}
+  }
 };
 var mknum = (n) => mkAst("number", n);
 var mkstr = (s) => mkAst("string", s);
@@ -687,8 +741,6 @@ var mkvar = (name) => mkAst("var", { name });
 var mkapp = (fn, args) => mkAst("app", { fn, args });
 var mklet = (v, value, body2) => mkAst("let", { var: mkvar(v), value, body: body2 });
 var mkfun = (vars, body2) => mkAst("function", { vars: vars.map(mkvar), body: body2 });
-var annot = (type, value) => mkAst("annot", { type, value });
-var builtin = (name) => mkAst("builtin", name);
 var mkrecord = (fields) => mkAst("record", Object.entries(fields).map(([k, v]) => [mkvar(k), v]));
 Object.entries({
   x: mkvar("x"),
@@ -696,15 +748,22 @@ Object.entries({
   '"hello"': mkstr("hello"),
   "(f x)": mkapp(mkvar("f"), [mkvar("x")]),
   "(f x y)": mkapp(mkvar("f"), [mkvar("x"), mkvar("y")]),
-  "@foo": mkAst("builtin", "foo"),
   "let x = 22 in x": mklet("x", mknum(22), mkvar("x")),
-  "x :: @number": annot(builtin("number"), mkvar("x")),
   "{a: 22, b: x}": mkrecord({ a: mknum(22), b: mkvar("x") }),
   "fn x => x": mkfun(["x"], mkvar("x")),
   "fn x y => x": mkfun(["x", "y"], mkvar("x")),
   "{e:22}": mkrecord({ e: mknum(22) }),
   "{e}": mkrecord({ e: mkvar("e") }),
   "//comment\n22": parse("22")
+}).forEach(([code, expected]) => test_parse(code, expected));
+Object.entries({
+  "(": mkAst("error", { message: "Unterminated parenthesized expression", content: "(" }),
+  "let x 22 in x": mkAst("let", {
+    var: mkvar("x"),
+    value: mkAst("error", { message: "Expected '=' after let binding name", content: "22" }),
+    body: mkvar("x")
+  }),
+  "{e:}": mkrecord({ e: mkAst("error", { message: "Expected record field value after ':'", content: "}" }) })
 }).forEach(([code, expected]) => test_parse(code, expected));
 test_span(`let x = 22
 in x`, {
@@ -743,6 +802,157 @@ var getdef = (root, vari) => {
   }
 };
 
+// src/runtime.ts
+var NUMBER = mkvar("number");
+var STRING = mkvar("string");
+var ANY = mkvar("any");
+var builtins = {
+  number: (n) => {
+    if (n.$ !== "number")
+      throw new Error(`expected number, got ${n.$}`);
+    n.type = NUMBER;
+    return n;
+  },
+  string: (s) => {
+    if (s.$ !== "string")
+      throw new Error(`expected string, got ${s.$}`);
+    s.type = STRING;
+    return s;
+  }
+};
+var typeInfer = (ast) => {
+  let annot = (ast2, type) => {
+    if (ast2.type) {
+      if (prettyAST(ast2.type) !== prettyAST(type))
+        throw new Error(`Type error: expected ${prettyAST(type)}, got ${prettyAST(ast2.type)}`);
+      return ast2;
+    }
+    ast2.type = type;
+    return ast2;
+  };
+  const go = (ast2, env) => {
+    switch (ast2.$) {
+      case "number":
+        return annot(ast2, NUMBER);
+      case "string":
+        return annot(ast2, STRING);
+      case "var": {
+        if (ast2.content.name in builtins)
+          return ast2;
+        let e = env;
+        while (e) {
+          if (e.name === ast2.content.name)
+            return annot(ast2, e.value);
+          e = e.next;
+        }
+        throw new Error(`unbound variable ${ast2.content.name}`);
+      }
+      case "let": {
+        let valueType = go(ast2.content.value, env).type;
+        if (valueType) {
+          annot(ast2.content.var, valueType);
+          env = { name: ast2.content.var.content.name, value: valueType, next: env };
+        }
+        let bodyType = go(ast2.content.body, env).type;
+        return bodyType ? annot(ast2, bodyType) : ast2;
+      }
+      default:
+        return ast2;
+    }
+  };
+  return go(ast, null);
+};
+var run = (ast) => {
+  let env = null;
+  const go = (ast2, env2) => {
+    switch (ast2.$) {
+      case "number":
+      case "string":
+        return ast2;
+      case "var": {
+        if (ast2.content.name in builtins)
+          return ast2;
+        let e = env2;
+        while (e) {
+          if (e.name === ast2.content.name)
+            return e.value;
+          e = e.next;
+        }
+        throw new Error(`unbound variable ${ast2.content.name}`);
+      }
+      case "let": {
+        let value = go(ast2.content.value, env2);
+        let newEnv = { name: ast2.content.var.content.name, value, next: env2 };
+        return go(ast2.content.body, newEnv);
+      }
+      case "function":
+        return ast2;
+      case "app": {
+        let fn = go(ast2.content.fn, env2);
+        if (fn.$ == "var") {
+          if (fn.content.name in builtins) {
+            let args = ast2.content.args.map((a) => go(a, env2));
+            return builtins[fn.content.name](...args);
+          }
+        }
+        if (fn.$ !== "function")
+          return mkAst("app", { fn, args: ast2.content.args.map((a) => go(a, env2)) }, ast2.span);
+        if (fn.content.vars.length !== ast2.content.args.length)
+          throw new Error(`argument length mismatch`);
+        let newEnv = env2;
+        for (let i = 0;i < fn.content.vars.length; i++) {
+          let argVal = go(ast2.content.args[i], env2);
+          newEnv = { name: fn.content.vars[i].content.name, value: argVal, next: newEnv };
+        }
+        return go(fn.content.body, newEnv);
+      }
+      case "record": {
+        return ast2;
+      }
+      default:
+        throw new Error(`cannot run AST of type ${ast2.$}`);
+    }
+  };
+  return go(ast, env);
+};
+{
+  Object.entries({
+    "let x= 22 in x": "22",
+    "let x = 22 in let y = 33 in x": "22",
+    "let f = fn x => x in f": "fn x => x",
+    "let f = fn x => x in (f 33)": "33",
+    "(let f = fn x => x in f 33)": "33",
+    "(number 22)": "22"
+  }).forEach(([code, expected]) => {
+    let ast = parse(code);
+    let res = ast;
+    try {
+      res = run(ast);
+    } catch (e) {
+      console.error(`Error running code: ${code}
+${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
+    let expectedAst = parse(expected);
+    let outStr = prettyAST(res);
+    let expectedStr = prettyAST(expectedAst);
+    if (prettyAST(res) !== expected)
+      console.error(`Test failed for code: ${code}
+Expected: ${expectedStr}
+Got: ${outStr}`);
+  });
+  [
+    "(string 22)"
+  ].forEach((code) => {
+    try {
+      let ast = parse(code);
+      let res = run(ast);
+      console.error(`Test failed for code: ${code}
+Expected an error but got: ${prettyAST(res)}`);
+    } catch (e) {}
+  });
+}
+
 // src/main.ts
 if (window.location.origin.includes("localhost"))
   (async () => {
@@ -765,6 +975,7 @@ var ast;
 var Edit = editor((s) => {
   try {
     ast = parse(s);
+    typeInfer(ast);
     outview.el.textContent = prettyAST(ast);
   } catch (e) {
     ast = undefined;
@@ -777,7 +988,7 @@ var Edit = editor((s) => {
   if (def)
     Edit.setCursor({ row: def.span.start.line - 1, col: def.span.start.col - 1 });
 }, (ast2) => {
-  return prettyAST(ast2);
+  return ast2.$ + ": " + prettyAST(ast2.type ?? ANY);
 });
 body.style({
   padding: "44px",

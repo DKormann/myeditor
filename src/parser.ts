@@ -1,7 +1,7 @@
 export type Pos = {offset: number, line: number, col: number}
 export type Span = {start: Pos, end: Pos}
 
-export type Tag <T extends string, C> = {$: T, content: C, span: Span}
+export type Tag <T extends string, C> = {$: T, content: C, span: Span, type?: AST}
 
 export type Var = Tag<"var", {name: string}>
 
@@ -11,23 +11,21 @@ export type AST =
   | Var
   | Tag<"number", number>
   | Tag<"string", string>
-  | Tag<"builtin", string>
   | Tag<"let", {var: Var, value: AST, body: AST}>
-  | Tag<"annot", {type: AST, value: AST}>
   | Tag<"record", [Var, AST][]>
+  | Tag<"error", {message: string, content: string}>
 
 
 export const prettyAST = (node: AST): string =>{
   switch(node.$){
     case "number" : return node.content.toString()
     case "string" : return JSON.stringify(node.content)
-    case "builtin": return node.content
     case "var": return node.content.name
     case "let": return `let ${node.content.var.content.name} = ${prettyAST(node.content.value)} in\n${prettyAST(node.content.body)}`
     case "function": return `fn ${node.content.vars.map(v=>v.content.name).join(" ")} => ${prettyAST(node.content.body)}`
     case "app": return `(${prettyAST(node.content.fn)} ${node.content.args.map(prettyAST).join(" ")})`
-    case "annot": return `${prettyAST(node.content.value)} :: ${prettyAST(node.content.type)}`
     case "record": return `{${node.content.map(([k, v]) => `${k.content.name}: ${prettyAST(v)}`).join(", ")}}`
+    case "error": return `[ERROR: ${node.content.message}]`
   }
 }
 
@@ -35,21 +33,20 @@ export const prettyAST = (node: AST): string =>{
 const zeroPos = (): Pos => ({offset: 0, line: 1, col: 1})
 const zeroSpan = (): Span => ({start: zeroPos(), end: zeroPos()})
 
-const mkAst = <T extends string, C>(tag: T, content: C, span: Span = zeroSpan()): Tag<T, C> => ({$: tag, content, span})
+export const mkAst = <T extends string, C>(tag: T, content: C, span: Span = zeroSpan()): Tag<T, C> => ({$: tag, content, span})
 
 type TokenBase = {span: Span}
 
 type Token =
   | (TokenBase & {type: "ident", value: string})
-  | (TokenBase & {type: "builtin", value: string})
   | (TokenBase & {type: "number", value: number})
   | (TokenBase & {type: "string", value: string})
   | (TokenBase & {type: "symbol", value: "(" | ")" | "{" | "}" | "," | "=" | ":"})
-  | (TokenBase & {type: "annot"})
   | (TokenBase & {type: "arrow"})
   | (TokenBase & {type: "keyword", value: "let" | "in" | "fn"})
+  | (TokenBase & {type: "error", message: string, content: string})
 
-const tokenize = (code: string): Token[] => {
+const tokenize = (code: string): {tokens: Token[], eof: Pos} => {
   let tokens: Token[] = []
   let i = 0
   let line = 1
@@ -88,14 +85,6 @@ const tokenize = (code: string): Token[] => {
       continue
     }
 
-    if (char === ":" && code[i + 1] === ":") {
-      let start = pos()
-      advance()
-      advance()
-      push({type: "annot"}, start)
-      continue
-    }
-
     if (char === "=" && code[i + 1] === ">") {
       let start = pos()
       advance()
@@ -112,16 +101,6 @@ const tokenize = (code: string): Token[] => {
       continue
     }
 
-    if (char === "@") {
-      let start = pos()
-      advance()
-      let valueStart = i
-      while (i < code.length && isIdent(code[i])) advance()
-      if (valueStart === i) throw new Error("Expected builtin name after @")
-      push({type: "builtin", value: code.slice(valueStart, i)}, start)
-      continue
-    }
-
     if (char === '"') {
       let start = pos()
       advance()
@@ -130,7 +109,11 @@ const tokenize = (code: string): Token[] => {
         let current = code[i]
         if (current === "\\") {
           let next = code[i + 1]
-          if (next === undefined) throw new Error("Unterminated string escape")
+          if (next === undefined) {
+            advance()
+            push({type: "error", message: "Unterminated string escape", content: code.slice(start.offset, i)}, start)
+            return {tokens, eof: pos()}
+          }
           let escaped = ({n: "\n", r: "\r", t: "\t", '"': '"', "\\": "\\"} as Record<string, string>)[next]
           value += escaped ?? next
           advance()
@@ -141,7 +124,10 @@ const tokenize = (code: string): Token[] => {
         value += current
         advance()
       }
-      if (code[i] !== '"') throw new Error("Unterminated string literal")
+      if (code[i] !== '"') {
+        push({type: "error", message: "Unterminated string literal", content: code.slice(start.offset, i)}, start)
+        return {tokens, eof: pos()}
+      }
       advance()
       push({type: "string", value}, start)
       continue
@@ -165,37 +151,58 @@ const tokenize = (code: string): Token[] => {
       continue
     }
 
-    throw new Error(`Unexpected character: ${char}`)
+    let start = pos()
+    advance()
+    push({type: "error", message: `Unexpected character: ${char}`, content: char}, start)
   }
 
-  return tokens
+  return {tokens, eof: pos()}
 }
 
 class Parser {
   private i = 0
 
-  constructor(private tokens: Token[]) {}
+  constructor(private tokens: Token[], private source: string, private eof: Pos) {}
 
   parse(): AST {
     let ast = this.parseExpr()
-    if (this.peek()) throw new Error(`Unexpected token at end: ${this.describe(this.peek())}`)
+    if (this.peek()) {
+      let start = this.peek()!.span.start
+      let end = this.tokens[this.tokens.length - 1]?.span.end ?? start
+      return this.errorNode("Unexpected extra input after expression", {start, end}, this.source.slice(start.offset, end.offset))
+    }
     return ast
   }
 
   private parseExpr(): AST {
     if (this.isKeyword("let")) return this.parseLet()
     if (this.isKeyword("fn")) return this.parseFunction()
-    return this.parseAnnot()
+    return this.parseAtom()
   }
 
   private parseLet(): AST {
     let start = this.expectKeyword("let").span.start
-    let name = this.expectToken("ident")
-    this.expectSymbol("=")
-    let value = this.parseExpr()
-    this.expectKeyword("in")
-    let body = this.parseExpr()
-    return mkAst("let", {var: mkAst("var", {name:name.value}, name.span), value, body}, {start, end: body.span.end})
+    let name = this.matchToken("ident")
+    if (!name) return this.errorHere("Expected identifier after let", start)
+    let variable = mkAst("var", {name: name.value}, name.span)
+
+    let value: AST
+    if (this.isSymbol("=")) {
+      this.expectSymbol("=")
+      value = this.parseExpr()
+    } else {
+      value = this.peek() ? this.wrapError("Expected '=' after let binding name", this.parseExpr()) : this.errorHere("Expected '=' after let binding name")
+    }
+
+    let body: AST
+    if (this.isKeyword("in")) {
+      this.expectKeyword("in")
+      body = this.parseExpr()
+    } else {
+      body = this.peek() ? this.wrapError("Expected keyword in after let binding", this.parseExpr()) : this.errorHere("Expected keyword in after let binding")
+    }
+
+    return mkAst("let", {var: variable, value, body}, {start, end: body.span.end})
   }
 
   private parseFunction(): AST {
@@ -205,35 +212,27 @@ class Parser {
       let ident = this.expectToken("ident")
       vars.push(mkAst("var", {name: ident.value}, ident.span))
     }
-    if (vars.length === 0) throw new Error("Function requires at least one parameter")
-    this.expectArrow()
-    let body = this.parseExpr()
-    return mkAst("function", {vars, body}, {start, end: body.span.end})
-  }
-
-  private parseAnnot(): AST {
-    let value = this.parseAtom()
-    while (this.peek()?.type === "annot") {
-      this.expectToken("annot")
-      let type = this.parseExpr()
-      value = mkAst("annot", {type, value}, {start: value.span.start, end: type.span.end})
+    let body: AST
+    if (vars.length === 0) {
+      if (this.matchToken("arrow")) body = this.wrapError("Function requires at least one parameter", this.parseExpr())
+      else body = this.peek() ? this.wrapError("Function requires at least one parameter", this.parseExpr()) : this.errorHere("Function requires at least one parameter", start)
+    } else if (!this.matchToken("arrow")) {
+      body = this.peek() ? this.wrapError("Expected '=>' after function parameters", this.parseExpr()) : this.errorHere("Expected '=>' after function parameters")
+    } else {
+      body = this.parseExpr()
     }
-    return value
+    return mkAst("function", {vars, body}, {start, end: body.span.end})
   }
 
   private parseAtom(): AST {
     let token = this.peek()
-    if (!token) throw new Error("Unexpected end of input")
+    if (!token) return this.errorHere("Unexpected end of input")
 
     if (token.type === "ident") {
       this.i++
       return mkAst("var", {name: token.value}, token.span)
     }
 
-    if (token.type === "builtin") {
-      this.i++
-      return mkAst("builtin", token.value, token.span)
-    }
 
     if (token.type === "number") {
       this.i++
@@ -244,22 +243,30 @@ class Parser {
       this.i++
       return mkAst("string", token.value, token.span)
     }
+    if (token.type === "error") {
+      this.i++
+      return mkAst("error", {message: token.message, content: token.content}, token.span)
+    }
 
     if (this.isSymbol("(")) return this.parseParens()
     if (this.isSymbol("{")) return this.parseRecord()
 
-    throw new Error(`Unexpected token: ${this.describe(token)}`)
+    this.i++
+    return this.errorNode(`Unexpected token: ${this.describe(token)}`, token.span)
   }
 
   private parseParens(): AST {
     let open = this.expectSymbol("(")
     let items: AST[] = []
     while (!this.isSymbol(")")) {
-      if (!this.peek()) throw new Error("Unterminated parenthesized expression")
+      if (!this.peek()) {
+        let end = items.at(-1)?.span.end ?? open.span.end
+        return this.errorNode("Unterminated parenthesized expression", {start: open.span.start, end}, this.source.slice(open.span.start.offset, end.offset))
+      }
       items.push(this.parseExpr())
     }
     let close = this.expectSymbol(")")
-    if (items.length === 0) throw new Error("Empty parentheses are not allowed")
+    if (items.length === 0) return this.errorNode("Empty parentheses are not allowed", {start: open.span.start, end: close.span.end}, this.source.slice(open.span.start.offset, close.span.end.offset))
     if (items.length === 1) return items[0]
     return mkAst("app", {fn: items[0], args: items.slice(1)}, {start: open.span.start, end: close.span.end})
   }
@@ -269,16 +276,29 @@ class Parser {
     let fields: [Var, AST][] = []
 
     while (!this.isSymbol("}")) {
-      let name = this.expectToken("ident")
+      if (!this.peek()) {
+        let end = fields.at(-1)?.[1].span.end ?? open.span.end
+        return this.errorNode("Unterminated record", {start: open.span.start, end}, this.source.slice(open.span.start.offset, end.offset))
+      }
+      let name = this.matchToken("ident")
+      if (!name) {
+        let token = this.peek()!
+        this.i++
+        return this.errorNode(`Expected record field name, got ${this.describe(token)}`, {start: open.span.start, end: token.span.end}, this.source.slice(open.span.start.offset, token.span.end.offset))
+      }
       let key = mkAst("var", {name: name.value}, name.span)
       let value = this.isSymbol(":")
-        ? (this.expectSymbol(":"), this.parseExpr())
+        ? (this.expectSymbol(":"), this.isSymbol("}") ? this.errorHere("Expected record field value after ':'") : this.parseExpr())
         : key
       fields.push([key, value])
       if (this.isSymbol(",")) this.i++
       else break
     }
 
+    if (!this.isSymbol("}")) {
+      let end = fields.at(-1)?.[1].span.end ?? open.span.end
+      return this.errorNode("Unterminated record", {start: open.span.start, end}, this.source.slice(open.span.start.offset, end.offset))
+    }
     let close = this.expectSymbol("}")
     return mkAst("record", fields, {start: open.span.start, end: close.span.end})
   }
@@ -300,6 +320,13 @@ class Parser {
   private expectToken<K extends Token["type"]>(type: K): Extract<Token, {type: K}> {
     let token = this.peek()
     if (!token || token.type !== type) throw new Error(`Expected ${type}, got ${this.describe(token)}`)
+    this.i++
+    return token as Extract<Token, {type: K}>
+  }
+
+  private matchToken<K extends Token["type"]>(type: K): Extract<Token, {type: K}> | undefined {
+    let token = this.peek()
+    if (!token || token.type !== type) return undefined
     this.i++
     return token as Extract<Token, {type: K}>
   }
@@ -329,17 +356,41 @@ class Parser {
   private describe(token: Token | undefined): string {
     if (!token) return "end of input"
     if ("value" in token) return `${token.type}(${String(token.value)})`
+    if (token.type === "error") return `error(${token.message})`
     return token.type
+  }
+
+  private errorNode(message: string, span?: Span, content?: string): AST {
+    let finalSpan = span ?? this.pointSpan()
+    return mkAst("error", {message, content: content ?? this.source.slice(finalSpan.start.offset, finalSpan.end.offset)}, finalSpan)
+  }
+
+  private errorHere(message: string, start?: Pos): AST {
+    let span = this.peek()?.span ?? {start: this.eof, end: this.eof}
+    return this.errorNode(message, {start: start ?? span.start, end: span.end})
+  }
+
+  private wrapError(message: string, node: AST): AST {
+    return this.errorNode(message, node.span, this.source.slice(node.span.start.offset, node.span.end.offset))
+  }
+
+  private pointSpan(): Span {
+    let token = this.peek()
+    if (token) return token.span
+    return {start: this.eof, end: this.eof}
   }
 }
 
-export const parse = (code:string):AST => new Parser(tokenize(code)).parse()
+export const parse = (code:string):AST => {
+  let {tokens, eof} = tokenize(code)
+  return new Parser(tokens, code, eof).parse()
+}
 
 export const children = (node: AST): AST[] => {
   if (node.$ === "function") return [...node.content.vars, node.content.body]
   if (node.$ === "app") return [node.content.fn, ...node.content.args]
   if (node.$ === "let") return [node.content.var, node.content.value, node.content.body]
-  if (node.$ === "annot") return [node.content.value, node.content.type]
+  // if (node.$ === "annot") return [node.content.value, node.content.type]
   if (node.$ === "record") return node.content.flatMap(([key, value]) => [key, value])
   return []
 }
@@ -348,8 +399,9 @@ const stripSpans = (ast: AST): unknown => {
   if (ast.$ === "function") return {$: ast.$, content: {vars: ast.content.vars.map(stripSpans), body: stripSpans(ast.content.body)}}
   if (ast.$ === "app") return {$: ast.$, content: {fn: stripSpans(ast.content.fn), args: ast.content.args.map(stripSpans)}}
   if (ast.$ === "let") return {$: ast.$, content: {var: stripSpans(ast.content.var), value: stripSpans(ast.content.value), body: stripSpans(ast.content.body)}}
-  if (ast.$ === "annot") return {$: ast.$, content: {type: stripSpans(ast.content.type), value: stripSpans(ast.content.value)}}
+  // if (ast.$ === "annot") return {$: ast.$, content: {type: stripSpans(ast.content.type), value: stripSpans(ast.content.value)}}
   if (ast.$ === "record") return {$: ast.$, content: ast.content.map(([name, value]) => [stripSpans(name), stripSpans(value)])}
+  if (ast.$ === "error") return {$: ast.$, content: ast.content}
   return {$: ast.$, content: ast.content}
 }
 
@@ -376,20 +428,17 @@ const test_span = (code: string, expected: Span) => {
     console.error("Expected:", expected)
     console.error("Got:", ast.span)
     throw new Error(`Span test failed for code: ${code}`)
-  } else {
-    // console.log("Span test passed for code:", code)
   }
 }
 
-let mknum = (n: number) => mkAst("number", n)
-let mkstr = (s: string) => mkAst("string", s)
-let mkvar = (name: string) => mkAst("var", {name})
-let mkapp = (fn: AST, args: AST[]) => mkAst("app", {fn, args})
-let mklet = (v: string, value: AST, body: AST) => mkAst("let", {var: mkvar(v), value, body})
-let mkfun = (vars: string[], body: AST) => mkAst("function", {vars: vars.map(mkvar), body})
-let annot = (type: AST, value: AST) => mkAst("annot", {type, value})
-let builtin = (name: string) => mkAst("builtin", name)
-let mkrecord = (fields: {[key : string] : AST}) => mkAst("record", Object.entries(fields).map(([k,v])=> [mkvar(k), v]))
+export let mknum = (n: number) => mkAst("number", n)
+export let mkstr = (s: string) => mkAst("string", s)
+export let mkvar = (name: string) => mkAst("var", {name})
+export let mkapp = (fn: AST, args: AST[]) => mkAst("app", {fn, args})
+export let mklet = (v: string, value: AST, body: AST) => mkAst("let", {var: mkvar(v), value, body})
+export let mkfun = (vars: string[], body: AST) => mkAst("function", {vars: vars.map(mkvar), body})
+export let annot = (type: AST, value: AST) => mkAst("annot", {type, value})
+export let mkrecord = (fields: {[key : string] : AST}) => mkAst("record", Object.entries(fields).map(([k,v])=> [mkvar(k), v]))
 
 Object.entries({
   "x": mkvar("x"),
@@ -397,15 +446,23 @@ Object.entries({
   '"hello"': mkstr("hello"),
   "(f x)": mkapp(mkvar("f"), [mkvar("x")]),
   "(f x y)": mkapp(mkvar("f"), [mkvar("x"), mkvar("y")]),
-  "@foo": mkAst("builtin", "foo"),
   "let x = 22 in x": mklet("x", mknum(22), mkvar("x")),
-  "x :: @number": annot(builtin("number"), mkvar("x")),
   "{a: 22, b: x}": mkrecord({a: mknum(22), b: mkvar("x")}),
   "fn x => x": mkfun(["x"], mkvar("x")),
   "fn x y => x": mkfun(["x", "y"], mkvar("x")),
   "{e:22}" : mkrecord({e: mknum(22)}),
   "{e}": mkrecord({e: mkvar("e")}),
   "//comment\n22": parse("22"),
+}).forEach(([code, expected]) => test_parse(code, expected as AST))
+
+Object.entries({
+  "(": mkAst("error", {message: "Unterminated parenthesized expression", content: "("}),
+  "let x 22 in x": mkAst("let", {
+    var: mkvar("x"),
+    value: mkAst("error", {message: "Expected '=' after let binding name", content: "22"}),
+    body: mkvar("x"),
+  }),
+  "{e:}": mkrecord({e: mkAst("error", {message: "Expected record field value after ':'", content: "}"})}),
 
 }).forEach(([code, expected]) => test_parse(code, expected as AST))
 

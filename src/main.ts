@@ -2,6 +2,7 @@ import { body, html, span , fromHTML} from "./html";
 import { editor } from "./editor";
 import { children, parse, prettyAST, type AST, type Span } from "./parser";
 import { astmap, getdef } from "./lsp"
+import {typeInfer, ANY} from "./runtime"
 
 
 if (window.location.origin.includes("localhost"))(async ()=>{
@@ -27,8 +28,10 @@ let ast: AST | undefined
 
 let Edit = editor(s=> {
     try{
-      ast = parse(s)  
+      ast = parse(s)
+      typeInfer(ast)
       outview.el.textContent = prettyAST(ast)
+
     }catch(e){
       ast = undefined
       outview.el.textContent = e instanceof Error ? e.message : String(e)
@@ -42,7 +45,7 @@ let Edit = editor(s=> {
     if (def) Edit.setCursor({row: def.span.start.line-1, col: def.span.start.col-1})
   },
   (ast) => {
-    return prettyAST(ast)
+    return ast.$ + ": " + prettyAST(ast.type ?? ANY)
   }
 )
 

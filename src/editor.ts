@@ -6,9 +6,9 @@ type Pos = { col: number, row: number }
 
 const colorOf = (node: AST | undefined): string => {
   if (node == undefined) return "#848484"
-  if (node.$ === "number" || node.$ === "string" || node.$ ==  "builtin") return "#d3af21"
+  if (node.$ === "number" || node.$ === "string" ) return "#d3af21"
   if (node.$ === "var") return "#f983ef"
-  if (node.$ === "let" || node.$ == "function" || node.$ == "annot") return "#5b8fff"
+  if (node.$ === "let" || node.$ == "function" ) return "#5b8fff"
   if (node.$ === "app") return "#50e37c"
   return "#ffffff"
 }
@@ -44,6 +44,10 @@ let y = 33 :: @number in
 
   let selrange = () : undefined | [Pos, Pos] => {
     if (!cursor.selection) return undefined
+    if (cursor.row == cursor.selection.row && cursor.col == cursor.selection.col) {
+      cursor.selection = undefined
+      return undefined
+    }
     if (plesseq(cursor, cursor.selection)) return [cursor, cursor.selection]
     else return [cursor.selection, cursor]
   }
@@ -273,6 +277,7 @@ let y = 33 :: @number in
             window.removeEventListener("mouseout", out)
           }
           let move = (e: MouseEvent) => {
+          if (e.metaKey) return remove()
             tooltip.style({
               left: e.clientX + "px",
               bottom: (window.innerHeight - e.clientY + 10) + "px",
