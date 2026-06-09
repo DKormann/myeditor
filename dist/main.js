@@ -1125,4 +1125,4 @@ let r= (id "2") in
 
 (id 2)
 `;
-body.append(Edit.el, outview, buttn("about", () => Edit.setText(about_text)), buttn("github", () => window.open("https://github.com/dkormann/myeditor")));
+body.append(div(span("✈︎").style({ fontSize: "3em", marginRight: "8px" }), span("my editor").style({ fontSize: "1.5em", fontWeight: "bold" })).style({ display: "flex", alignItems: "center", marginBottom: "16px", color: "gray" }), Edit.el, outview, buttn("about", () => Edit.setText(about_text)), buttn("github", () => window.open("https://github.com/dkormann/myeditor")));

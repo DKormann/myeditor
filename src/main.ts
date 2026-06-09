@@ -1,4 +1,4 @@
-import { body, html, span , fromHTML} from "./html";
+import { body, html, span , fromHTML, h2, div} from "./html";
 import { editor } from "./editor";
 import { parse, prettyAST, type AST, type Span, type SyntaxNode } from "./parser";
 import { getdef } from "./lsp"
@@ -108,6 +108,11 @@ let r= (id "2") in
 `
 
 body.append(
+  div(
+    span('✈︎').style({fontSize: "3em", marginRight: "8px"}),
+    span("my editor").style({fontSize: "1.5em", fontWeight: "bold"})
+  ).style({display: "flex", alignItems: "center", marginBottom: "16px", color: "gray"}),
+
   Edit.el,
   outview,
   buttn("about", () => Edit.setText(about_text)),
