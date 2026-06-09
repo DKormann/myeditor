@@ -2,7 +2,7 @@ import { body, html, span , fromHTML} from "./html";
 import { editor } from "./editor";
 import { children, parse, prettyAST, type AST, type Span } from "./parser";
 import { astmap, getdef } from "./lsp"
-import {typeInfer, ANY} from "./runtime"
+import { run, ANY } from "./runtime"
 
 
 if (window.location.origin.includes("localhost"))(async ()=>{
@@ -29,7 +29,7 @@ let ast: AST | undefined
 let Edit = editor(s=> {
     try{
       ast = parse(s)
-      typeInfer(ast)
+      let res = run(ast)
       outview.el.textContent = prettyAST(ast)
 
     }catch(e){

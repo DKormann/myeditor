@@ -803,140 +803,202 @@ var getdef = (root, vari) => {
 };
 
 // src/runtime.ts
+var annot = (ast, type) => {
+  if (ast.type) {
+    if (prettyAST(ast.type) !== prettyAST(type))
+      throw new Error(`Type error: expected ${prettyAST(type)}, got ${prettyAST(ast.type)}`);
+    return ast;
+  }
+  ast.type = type;
+  return ast;
+};
 var NUMBER = mkvar("number");
 var STRING = mkvar("string");
+var TYPE = mkvar("type");
+NUMBER.type = TYPE;
+STRING.type = TYPE;
+TYPE.type = TYPE;
 var ANY = mkvar("any");
 var builtins = {
-  number: (n) => {
-    if (n.$ !== "number")
-      throw new Error(`expected number, got ${n.$}`);
-    n.type = NUMBER;
-    return n;
+  number: {
+    type: TYPE,
+    impl: (n) => annot(n, NUMBER)
   },
-  string: (s) => {
-    if (s.$ !== "string")
-      throw new Error(`expected string, got ${s.$}`);
-    s.type = STRING;
-    return s;
+  string: {
+    type: TYPE,
+    impl: (s) => annot(s, STRING)
   }
 };
-var typeInfer = (ast) => {
-  let annot = (ast2, type) => {
-    if (ast2.type) {
-      if (prettyAST(ast2.type) !== prettyAST(type))
-        throw new Error(`Type error: expected ${prettyAST(type)}, got ${prettyAST(ast2.type)}`);
-      return ast2;
-    }
-    ast2.type = type;
-    return ast2;
+var run = (ast) => {
+  let lookup = (name, env) => {
+    if (!env)
+      return null;
+    if (env.name === name)
+      return env.value;
+    return lookup(name, env.next);
   };
-  const go = (ast2, env) => {
+  let freename = (env) => {
+    let n = 0;
+    while (lookup(`x${n}`, env))
+      n++;
+    return `x${n}`;
+  };
+  const dedup = (ast2, env) => {
+    switch (ast2.$) {
+      case "var": {
+        let val = lookup(ast2.content.name, env);
+        if (val)
+          return val;
+        return ast2;
+      }
+      case "app": {
+        return mkapp(dedup(ast2.content.fn, env), ast2.content.args.map((arg) => dedup(arg, env)));
+      }
+      case "function": {
+        env = ast2.content.vars.reduce((e, v) => ({ name: v.content.name, value: v, next: e }), env);
+        return mkAst("function", {
+          vars: ast2.content.vars,
+          body: dedup(ast2.content.body, env)
+        }, ast2.span);
+      }
+      case "let": {
+        let value = dedup(ast2.content.value, env);
+        env = { name: ast2.content.var.content.name, value, next: env };
+        return mkAst("let", {
+          var: ast2.content.var,
+          value,
+          body: dedup(ast2.content.body, env)
+        }, ast2.span);
+      }
+      case "record": {
+        return mkAst("record", ast2.content.map(([v, val]) => [v, dedup(val, env)]), ast2.span);
+      }
+      default:
+        return ast2;
+    }
+  };
+  const go = (ast2, vals, types) => {
     switch (ast2.$) {
       case "number":
         return annot(ast2, NUMBER);
       case "string":
         return annot(ast2, STRING);
-      case "var": {
-        if (ast2.content.name in builtins)
-          return ast2;
-        let e = env;
-        while (e) {
-          if (e.name === ast2.content.name)
-            return annot(ast2, e.value);
-          e = e.next;
-        }
-        throw new Error(`unbound variable ${ast2.content.name}`);
-      }
       case "let": {
-        let valueType = go(ast2.content.value, env).type;
-        if (valueType) {
-          annot(ast2.content.var, valueType);
-          env = { name: ast2.content.var.content.name, value: valueType, next: env };
+        let value = go(ast2.content.value, vals, types);
+        vals = { name: ast2.content.var.content.name, value, next: vals };
+        if (value.type) {
+          types = { name: ast2.content.var.content.name, value: value.type, next: types };
+          annot(ast2.content.var, value.type);
         }
-        let bodyType = go(ast2.content.body, env).type;
-        return bodyType ? annot(ast2, bodyType) : ast2;
+        let res = go(ast2.content.body, vals, types);
+        if (res.type)
+          annot(ast2, res.type);
+        return res;
       }
-      default:
-        return ast2;
-    }
-  };
-  return go(ast, null);
-};
-var run = (ast) => {
-  let env = null;
-  const go = (ast2, env2) => {
-    switch (ast2.$) {
-      case "number":
-      case "string":
-        return ast2;
       case "var": {
-        if (ast2.content.name in builtins)
-          return ast2;
-        let e = env2;
-        while (e) {
-          if (e.name === ast2.content.name)
-            return e.value;
-          e = e.next;
+        if (builtins[ast2.content.name]) {
+          let def = builtins[ast2.content.name];
+          return annot(ast2, def.type);
         }
-        throw new Error(`unbound variable ${ast2.content.name}`);
-      }
-      case "let": {
-        let value = go(ast2.content.value, env2);
-        let newEnv = { name: ast2.content.var.content.name, value, next: env2 };
-        return go(ast2.content.body, newEnv);
-      }
-      case "function":
+        let type = lookup(ast2.content.name, types);
+        if (type)
+          annot(ast2, type);
+        let val = lookup(ast2.content.name, vals);
+        if (val)
+          return val;
         return ast2;
+      }
+      case "function": {
+        let bod = go(ast2.content.body, vals, types);
+        let fvar = mkvar(freename(vals));
+        if (bod.type) {
+          annot(ast2, mkAst("function", {
+            vars: [fvar],
+            body: mkAst("function", {
+              vars: ast2.content.vars,
+              body: mkapp(bod.type, [mkapp(fvar, ast2.content.vars.map((v) => v.type ? mkapp(v.type, [v]) : v))])
+            }, ast2.span)
+          }));
+        }
+        return ast2;
+      }
       case "app": {
-        let fn = go(ast2.content.fn, env2);
-        if (fn.$ == "var") {
-          if (fn.content.name in builtins) {
-            let args = ast2.content.args.map((a) => go(a, env2));
-            return builtins[fn.content.name](...args);
-          }
+        let fn = go(ast2.content.fn, vals, types);
+        let args = ast2.content.args.map((arg) => go(arg, vals, types));
+        if (fn.$ == "var" && builtins[fn.content.name]) {
+          let def = builtins[fn.content.name];
+          let res = def.impl(...args);
+          if (res.type)
+            annot(ast2, res.type);
+          return res;
         }
-        if (fn.$ !== "function")
-          return mkAst("app", { fn, args: ast2.content.args.map((a) => go(a, env2)) }, ast2.span);
-        if (fn.content.vars.length !== ast2.content.args.length)
-          throw new Error(`argument length mismatch`);
-        let newEnv = env2;
-        for (let i = 0;i < fn.content.vars.length; i++) {
-          let argVal = go(ast2.content.args[i], env2);
-          newEnv = { name: fn.content.vars[i].content.name, value: argVal, next: newEnv };
+        if (args.some((a) => a.$ == "var"))
+          return ast2;
+        if (fn.$ == "function") {
+          if (fn.content.vars.length !== args.length)
+            throw new Error(`Expected ${fn.content.vars.length} arguments, got ${args.length}`);
+          let vals2;
         }
-        return go(fn.content.body, newEnv);
-      }
-      case "record": {
         return ast2;
       }
       default:
-        throw new Error(`cannot run AST of type ${ast2.$}`);
+        return ast2;
     }
   };
-  return go(ast, env);
+  return go(dedup(ast, null), null, null);
 };
 {
+  const assertEq = (expected, got, code) => {
+    if (prettyAST(expected) !== prettyAST(got)) {
+      console.error(`Test failed for code: ${code}
+Expected: ${prettyAST(expected)}
+Got: ${prettyAST(got)}`);
+    }
+  };
+  let x = mkvar("x");
+  let ast = mkapp(NUMBER, [x]);
+  let res = run(ast);
+  assertEq(x.type, NUMBER, "type of var in app");
+  Object.entries({
+    "22": "number",
+    '"hello"': "string",
+    "let x = 22 in 33": "number",
+    "let x = 22 in x": "number",
+    "(number x)": "number",
+    "fn x => (number x)": "fn x0 => fn x => (number (x0 (number x)))"
+  }).forEach(([code, expected]) => {
+    let ast2 = parse(code);
+    let res2 = run(ast2).type;
+    if (!res2) {
+      console.error(`TYPE Test failed for code: ${code}
+Expected: ${expected}
+Got: no type`);
+      return;
+    }
+    assertEq(parse(expected), res2, `Type test for code: ${code}`);
+  });
   Object.entries({
     "let x= 22 in x": "22",
     "let x = 22 in let y = 33 in x": "22",
     "let f = fn x => x in f": "fn x => x",
+    "(fn x => x 33)": "33",
     "let f = fn x => x in (f 33)": "33",
     "(let f = fn x => x in f 33)": "33",
     "(number 22)": "22"
   }).forEach(([code, expected]) => {
-    let ast = parse(code);
-    let res = ast;
+    let ast2 = parse(code);
+    let res2 = ast2;
     try {
-      res = run(ast);
+      res2 = run(ast2);
     } catch (e) {
       console.error(`Error running code: ${code}
 ${e instanceof Error ? e.message : String(e)}`);
       return;
     }
     let expectedAst = parse(expected);
-    let outStr = prettyAST(res);
+    let outStr = prettyAST(res2);
     let expectedStr = prettyAST(expectedAst);
-    if (prettyAST(res) !== expected)
+    if (prettyAST(res2) !== expected)
       console.error(`Test failed for code: ${code}
 Expected: ${expectedStr}
 Got: ${outStr}`);
@@ -945,10 +1007,10 @@ Got: ${outStr}`);
     "(string 22)"
   ].forEach((code) => {
     try {
-      let ast = parse(code);
-      let res = run(ast);
+      let ast2 = parse(code);
+      let res2 = run(ast2);
       console.error(`Test failed for code: ${code}
-Expected an error but got: ${prettyAST(res)}`);
+Expected an error but got: ${prettyAST(res2)}`);
     } catch (e) {}
   });
 }
@@ -975,7 +1037,7 @@ var ast;
 var Edit = editor((s) => {
   try {
     ast = parse(s);
-    typeInfer(ast);
+    let res = run(ast);
     outview.el.textContent = prettyAST(ast);
   } catch (e) {
     ast = undefined;
