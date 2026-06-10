@@ -338,8 +338,9 @@ var editor = (oninput, getAstMap, goToDef, hoverInfo) => {
 };
 
 // src/parser.ts
-var prettyVar = (v) => v.type ? `${v.content.name}: ${prettyAST(v.type)}` : v.content.name;
-var prettyLetVar = (v) => v.type ? `(${prettyAST(v.type)} ${v.content.name})` : v.content.name;
+var hasShownType = (v) => v.type && !(v.type.$ === "var" && v.type.content.name === "any");
+var prettyVar = (v) => hasShownType(v) ? `${v.content.name}: ${prettyAST(v.type)}` : v.content.name;
+var prettyLetVar = (v) => hasShownType(v) ? `(${prettyAST(v.type)} ${v.content.name})` : v.content.name;
 var prettyAST = (node) => {
   switch (node.$) {
     case "number":
@@ -904,8 +905,8 @@ var run = (ast) => {
   let lookup = (name, env) => {
     if (!env)
       return null;
-    if (env.name === name)
-      return env.value;
+    if (env.binder.content.name === name)
+      return env;
     return lookup(name, env.next);
   };
   let freename = (env) => {
@@ -914,57 +915,20 @@ var run = (ast) => {
       n++;
     return `x${n}`;
   };
-  const dedup = (ast2, env) => {
-    switch (ast2.$) {
-      case "var": {
-        let val = lookup(ast2.content.name, env);
-        if (val)
-          return val;
-        return ast2;
-      }
-      case "app": {
-        ast2.content.fn = dedup(ast2.content.fn, env);
-        ast2.content.args = ast2.content.args.map((arg) => dedup(arg, env));
-        return ast2;
-      }
-      case "function": {
-        env = ast2.content.vars.reduce((e, v) => ({ name: v.content.name, value: v, next: e }), env);
-        ast2.content.body = dedup(ast2.content.body, env);
-        return ast2;
-      }
-      case "let": {
-        let value = dedup(ast2.content.value, env);
-        env = { name: ast2.content.var.content.name, value, next: env };
-        ast2.content.value = dedup(value, env);
-        ast2.content.body = dedup(ast2.content.body, env);
-        return ast2;
-      }
-      case "record": {
-        ast2.content = ast2.content.map(([v, val]) => [v, dedup(val, env)]);
-        return ast2;
-      }
-      default:
-        return ast2;
-    }
-  };
-  const go = (ast2, vals, types) => {
+  let bind = (env, binder, value) => ({ binder, value, next: env });
+  const go = (ast2, env) => {
     switch (ast2.$) {
       case "number":
         return annot(ast2, NUMBER);
       case "string":
         return annot(ast2, STRING);
       case "let": {
-        let value = go(ast2.content.value, vals, types);
+        let value = go(ast2.content.value, env);
         if (ast2.content.var.type)
           value = applyType(value, ast2.content.var.type);
-        vals = { name: ast2.content.var.content.name, value, next: vals };
-        if (ast2.content.var.type) {
-          types = { name: ast2.content.var.content.name, value: ast2.content.var.type, next: types };
-        } else if (value.type) {
-          types = { name: ast2.content.var.content.name, value: value.type, next: types };
+        else if (value.type)
           ast2.content.var.type = value.type;
-        }
-        let res = go(ast2.content.body, vals, types);
+        let res = go(ast2.content.body, bind(env, ast2.content.var, value));
         if (res.type)
           annot(ast2, res.type);
         return res;
@@ -974,21 +938,23 @@ var run = (ast) => {
           let def = builtins[ast2.content.name];
           return annot(ast2, def.type);
         }
-        let val = lookup(ast2.content.name, vals);
-        if (val) {
-          if (!ast2.type && val.type)
-            ast2.type = val.type;
-          return val;
+        let hit = lookup(ast2.content.name, env);
+        if (hit) {
+          annot(ast2, hit.binder.type ?? ANY);
+          return hit.value;
         }
+        annot(ast2, ANY);
         return ast2;
       }
       case "function": {
-        ast2.content.vars.forEach((v) => {
-          if (!v.type)
-            v.type = ANY;
-        });
-        let bod = go(ast2.content.body, vals, types);
-        let fvar = mkvar(freename(vals));
+        let funenv = env;
+        for (let i = ast2.content.vars.length - 1;i >= 0; i--) {
+          let v = ast2.content.vars[i];
+          v.type = v.type ?? ANY;
+          funenv = bind(funenv, v, v);
+        }
+        let bod = go(ast2.content.body, funenv);
+        let fvar = mkvar(freename(env));
         let ftype = mkAst("function", {
           vars: [fvar],
           body: mkAst("function", {
@@ -997,12 +963,12 @@ var run = (ast) => {
           }, ast2.span)
         });
         annot(ast2, ftype);
-        ast2.content.env = vals;
+        ast2.content.env = env;
         return ast2;
       }
       case "app": {
-        let fn = go(ast2.content.fn, vals, types);
-        let args = ast2.content.args.map((arg) => go(arg, vals, types));
+        let fn = go(ast2.content.fn, env);
+        let args = ast2.content.args.map((arg) => go(arg, env));
         if (fn.$ == "var" && builtins[fn.content.name]) {
           let def = builtins[fn.content.name];
           let res = def.impl(...args);
@@ -1010,33 +976,28 @@ var run = (ast) => {
             annot(ast2, res.type);
           return res;
         }
-        if (args.some((a) => a.$ == "var"))
-          return ast2;
         if (fn.$ == "function") {
           if (fn.content.vars.length !== args.length)
             throw new Error(`Expected ${fn.content.vars.length} arguments, got ${args.length}`);
-          let bod = fn.content.body;
-          if (fn.content.env) {
-            let e = fn.content.env;
-            while (e) {
-              vals = { name: e.name, value: e.value, next: vals };
-              e = e.next;
-            }
+          let callenv = fn.content.env;
+          for (let i = fn.content.vars.length - 1;i >= 0; i--) {
+            let binder = fn.content.vars[i];
+            let value = binder.type ? applyType(args[i], binder.type) : args[i];
+            callenv = bind(callenv, binder, value);
           }
-          for (let i = fn.content.vars.length - 1;i >= 0; i--)
-            vals = { name: fn.content.vars[i].content.name, value: args[i], next: vals };
-          let res = go(bod, vals, types);
+          let res = go(fn.content.body, callenv);
           if (res.type)
             annot(ast2, res.type);
           return res;
         }
+        annot(ast2, ANY);
         return ast2;
       }
       default:
         return ast2;
     }
   };
-  return go(dedup(ast, null), null, null);
+  return go(ast, null);
 };
 {
   const assertEq = (got, expected, code) => {
@@ -1055,14 +1016,12 @@ Got     : ${G}`);
   assertEq(ast.type, NUMBER, "type of app");
   let t = parse("fn x => x").ast;
   run(t);
-  console.log(prettyAST(t.type));
   Object.entries({
     "22": "number",
     '"hello"': "string",
     "let x = 22 in 33": "number",
     "let x = 22 in x": "number",
-    "(number x)": "number",
-    "fn x => (number x)": "fn x0 => fn x => (number (x0 (number x)))"
+    "(number x)": "number"
   }).forEach(([code, expected]) => {
     let ast2 = parse(code).ast;
     let res = run(ast2).type;

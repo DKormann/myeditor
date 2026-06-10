@@ -20,8 +20,9 @@ export type AST =
 export type SyntaxNode = AST | Comment
 export type ParseResult = {ast: AST, comments: Comment[], astmap: (SyntaxNode | undefined)[]}
 
-const prettyVar = (v: Var): string => v.type ? `${v.content.name}: ${prettyAST(v.type)}` : v.content.name
-const prettyLetVar = (v: Var): string => v.type ? `(${prettyAST(v.type)} ${v.content.name})` : v.content.name
+const hasShownType = (v: Var) => v.type && !(v.type.$ === "var" && v.type.content.name === "any")
+const prettyVar = (v: Var): string => hasShownType(v) ? `${v.content.name}: ${prettyAST(v.type!)}` : v.content.name
+const prettyLetVar = (v: Var): string => hasShownType(v) ? `(${prettyAST(v.type!)} ${v.content.name})` : v.content.name
 
 export const prettyAST = (node: AST): string =>{
   switch(node.$){

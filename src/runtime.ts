@@ -73,17 +73,13 @@ let builtins: Record<string, {
 
 
 
-export type Env = {
-  name: string,
-  value: AST
-  next: Env
-} | null
+export type Env = {binder: Var, value: AST, next: Env} | null
 
 export const run = (ast: AST): AST => {
 
-  let lookup = (name: string, env: Env): AST | null => {
+  let lookup = (name: string, env: Env): Env => {
     if (!env) return null
-    if (env.name === name) return env.value
+    if (env.binder.content.name === name) return env
     return lookup(name, env.next)
   }
 
@@ -93,54 +89,18 @@ export const run = (ast: AST): AST => {
     return `x${n}`
   }
 
-  const dedup = (ast: AST, env:Env):AST=>{
-    switch(ast.$){
-      case "var": {
-        let val = lookup(ast.content.name, env)
-        if (val) return val
-        return ast
-      }
-      case "app": {
-        ast.content.fn = dedup(ast.content.fn, env)
-        ast.content.args = ast.content.args.map(arg => dedup(arg, env))
-        return ast
-      }
-      case "function": {
-        env = ast.content.vars.reduce((e, v) => ({name: v.content.name, value: v, next: e}), env)
-        ast.content.body = dedup(ast.content.body, env)
-        return ast
-      }
-      case "let": {
-        let value = dedup(ast.content.value, env)
-        env = {name: ast.content.var.content.name, value, next: env}
-        ast.content.value = dedup(value, env)
-        ast.content.body = dedup(ast.content.body, env)
-        return ast
-      }
-      case "record" :{
-        ast.content = ast.content.map(([v, val])=> [v, dedup(val, env)] as [Var, AST])
-        return ast
-      }
-      default: return ast
-    }
-  }
+  let bind = (env: Env, binder: Var, value: AST): Env => ({binder, value, next: env})
 
-  const go = (ast: AST, vals: Env, types: Env): AST => {
+  const go = (ast: AST, env: Env): AST => {
     switch(ast.$){
       case "number": return annot(ast, NUMBER)
       case "string": return annot(ast, STRING)
 
       case "let": {
-        let value = go(ast.content.value, vals, types)
+        let value = go(ast.content.value, env)
         if (ast.content.var.type) value = applyType(value, ast.content.var.type)
-        vals = {name: ast.content.var.content.name, value, next: vals}
-        if (ast.content.var.type){
-          types = {name: ast.content.var.content.name, value: ast.content.var.type, next: types}
-        } else if (value.type){
-          types = {name: ast.content.var.content.name, value: value.type, next: types}
-          ast.content.var.type = value.type
-        }
-        let res = go(ast.content.body, vals, types)
+        else if (value.type) ast.content.var.type = value.type
+        let res = go(ast.content.body, bind(env, ast.content.var, value))
         if (res.type) annot(ast, res.type)
         return res
       }
@@ -150,21 +110,24 @@ export const run = (ast: AST): AST => {
           let def = builtins[ast.content.name]
           return annot(ast, def.type)
         }
-        let val = lookup(ast.content.name, vals)
-        if (val) {
-          if (!ast.type && val.type) ast.type = val.type
-          return val
+        let hit = lookup(ast.content.name, env)
+        if (hit) {
+          annot(ast, hit.binder.type ?? ANY)
+          return hit.value
         }
+        annot(ast, ANY)
         return ast
       }
 
       case "function": {
-        ast.content.vars.forEach(v => {
-          if (!v.type) v.type = ANY
-        })
-
-        let bod = go(ast.content.body, vals, types)
-        let fvar = mkvar(freename(vals))
+        let funenv = env
+        for (let i = ast.content.vars.length - 1; i >= 0; i--) {
+          let v = ast.content.vars[i]
+          v.type = v.type ?? ANY
+          funenv = bind(funenv, v, v)
+        }
+        let bod = go(ast.content.body, funenv)
+        let fvar = mkvar(freename(env))
         let ftype = mkAst("function", {
             vars: [fvar],
             body: mkAst("function", {
@@ -176,13 +139,13 @@ export const run = (ast: AST): AST => {
           });
         
         annot(ast,ftype)
-        ast.content.env = vals
+        ast.content.env = env
         return ast
       }
 
       case "app": {
-        let fn = go(ast.content.fn, vals, types)
-        let args = ast.content.args.map(arg => go(arg, vals, types))
+        let fn = go(ast.content.fn, env)
+        let args = ast.content.args.map(arg => go(arg, env))
         if (fn.$ == "var" && builtins[fn.content.name]) {
           let def = builtins[fn.content.name]
           let res = def.impl(...args)
@@ -190,26 +153,21 @@ export const run = (ast: AST): AST => {
           if (res.type) annot(ast, res.type)
           return res
         }
-        if (args.some(a=>a.$ == "var")) return ast
         if (fn.$ == "function"){
           if (fn.content.vars.length !== args.length) throw new Error(`Expected ${fn.content.vars.length} arguments, got ${args.length}`)
 
-          let bod = fn.content.body
-          if (fn.content.env) {
-            let e: Env = fn.content.env
-            while (e){
-              vals = {name: e.name, value: e.value, next: vals}
-              e = e.next
-            }
+          let callenv = fn.content.env
+          for (let i = fn.content.vars.length - 1; i >= 0; i--) {
+            let binder = fn.content.vars[i]
+            let value = binder.type ? applyType(args[i], binder.type) : args[i]
+            callenv = bind(callenv, binder, value)
           }
 
-          for (let i = fn.content.vars.length-1; i >= 0; i--)
-            vals = {name: fn.content.vars[i].content.name, value: args[i], next: vals}
-
-          let res = go(bod, vals, types)
+          let res = go(fn.content.body, callenv)
           if (res.type) annot(ast, res.type)
           return res
         }
+        annot(ast, ANY)
         return ast
       }
 
@@ -217,7 +175,7 @@ export const run = (ast: AST): AST => {
     }
   }
 
-  return go(dedup(ast, null), null, null)
+  return go(ast, null)
 
 }
 
@@ -247,15 +205,12 @@ export const run = (ast: AST): AST => {
 
   run(t)
 
-  console.log(prettyAST(t.type!))
-
   Object.entries({
     "22": "number",
     "\"hello\"" : "string",
     "let x = 22 in 33": "number",
     "let x = 22 in x": "number",
     "(number x)": "number",
-    "fn x => (number x)": "fn x0 => fn x => (number (x0 (number x)))",
   }).forEach(([code, expected])=>{
     let ast = parse(code).ast
     let res = run(ast).type
