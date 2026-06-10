@@ -4,6 +4,11 @@ import {parse, prettyAST, mkAst, mkvar, mkapp, mkfun, mklet, Var} from "./parser
 
 let annot = (ast: AST, type: AST): AST => {
   if (ast.type) {
+    if (prettyAST(ast.type) === prettyAST(ANY)) {
+      ast.type = type
+      return ast
+    }
+    if (prettyAST(type) === prettyAST(ANY)) return ast
     if (prettyAST(ast.type) !== prettyAST(type)) throw new Error(`Type error: expected ${prettyAST(type)}, got ${prettyAST(ast.type)}`)
     return ast
   }

@@ -16,6 +16,8 @@ const colorOf = (node: SyntaxNode | undefined): string => {
 }
 
 
+let e = 2 as number
+
 export const editor = (oninput: (s:string)=>void,
   getAstMap : ()=> (SyntaxNode|undefined)[],
   goToDef : (ast: SyntaxNode) => void,

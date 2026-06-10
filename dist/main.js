@@ -339,6 +339,7 @@ var editor = (oninput, getAstMap, goToDef, hoverInfo) => {
 
 // src/parser.ts
 var prettyVar = (v) => v.type ? `${v.content.name}: ${prettyAST(v.type)}` : v.content.name;
+var prettyLetVar = (v) => v.type ? `(${prettyAST(v.type)} ${v.content.name})` : v.content.name;
 var prettyAST = (node) => {
   switch (node.$) {
     case "number":
@@ -348,7 +349,7 @@ var prettyAST = (node) => {
     case "var":
       return node.content.name;
     case "let":
-      return `let ${prettyVar(node.content.var)} = ${prettyAST(node.content.value)} in
+      return `let ${prettyLetVar(node.content.var)} = ${prettyAST(node.content.value)} in
 ${prettyAST(node.content.body)}`;
     case "function":
       return `fn ${node.content.vars.map(prettyVar).join(" ")} => ${prettyAST(node.content.body)}`;
@@ -505,7 +506,7 @@ class Parser {
   }
   parseLet() {
     let start = this.expectKeyword("let").span.start;
-    let variable = this.parseBinder();
+    let variable = this.parseLetBinder();
     if (variable.$ === "error")
       return variable;
     let value;
@@ -632,6 +633,24 @@ class Parser {
       variable.type = declaredType;
     }
     return variable;
+  }
+  parseLetBinder() {
+    if (this.isSymbol("(")) {
+      this.expectSymbol("(");
+      let declaredType = this.parseAtom();
+      let name = this.matchToken("ident");
+      if (!name)
+        return this.errorHere("Expected identifier in let binder pattern");
+      if (!this.isSymbol(")"))
+        return this.errorHere("Expected ')' after let binder pattern");
+      this.expectSymbol(")");
+      if (declaredType.$ === "error")
+        return declaredType;
+      let variable = mkAst("var", { name: name.value }, name.span);
+      variable.type = declaredType;
+      return variable;
+    }
+    return this.parseBinder();
   }
   peek() {
     return this.tokens[this.i];
@@ -782,7 +801,7 @@ Object.entries({
   "{a: 22, b: x}": mkrecord({ a: mknum(22), b: mkvar("x") }),
   "fn x => x": mkfun(["x"], mkvar("x")),
   "fn x y => x": mkfun(["x", "y"], mkvar("x")),
-  "let x: number = 22 in x": mklet(Object.assign(mkvar("x"), { type: mkvar("number") }), mknum(22), mkvar("x")),
+  "let (number x) = 22 in x": mklet(Object.assign(mkvar("x"), { type: mkvar("number") }), mknum(22), mkvar("x")),
   "fn x: number y: string => x": mkfun([
     Object.assign(mkvar("x"), { type: mkvar("number") }),
     Object.assign(mkvar("y"), { type: mkvar("string") })
@@ -827,6 +846,12 @@ var getdef = (root, vari) => {
 // src/runtime.ts
 var annot = (ast, type) => {
   if (ast.type) {
+    if (prettyAST(ast.type) === prettyAST(ANY)) {
+      ast.type = type;
+      return ast;
+    }
+    if (prettyAST(type) === prettyAST(ANY))
+      return ast;
     if (prettyAST(ast.type) !== prettyAST(type))
       throw new Error(`Type error: expected ${prettyAST(type)}, got ${prettyAST(ast.type)}`);
     return ast;
