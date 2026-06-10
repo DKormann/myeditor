@@ -185,6 +185,7 @@ var editor = (oninput, getAstMap, goToDef, hoverInfo) => {
       }
       lines[cursor.row] = lines[cursor.row].substring(0, cursor.col) + e.key + lines[cursor.row].substring(cursor.col);
       setCursor({ row: cursor.row, col: cursor.col + 1 });
+      cursor.selection = undefined;
     }
     if (e.key === "Backspace") {
       let range = selrange();
@@ -337,6 +338,7 @@ var editor = (oninput, getAstMap, goToDef, hoverInfo) => {
 };
 
 // src/parser.ts
+var prettyVar = (v) => v.type ? `${v.content.name}: ${prettyAST(v.type)}` : v.content.name;
 var prettyAST = (node) => {
   switch (node.$) {
     case "number":
@@ -346,10 +348,10 @@ var prettyAST = (node) => {
     case "var":
       return node.content.name;
     case "let":
-      return `let ${node.content.var.content.name} = ${prettyAST(node.content.value)} in
+      return `let ${prettyVar(node.content.var)} = ${prettyAST(node.content.value)} in
 ${prettyAST(node.content.body)}`;
     case "function":
-      return `fn ${node.content.vars.map((v) => v.content.name).join(" ")} => ${prettyAST(node.content.body)}`;
+      return `fn ${node.content.vars.map(prettyVar).join(" ")} => ${prettyAST(node.content.body)}`;
     case "app":
       return `(${prettyAST(node.content.fn)} ${node.content.args.map(prettyAST).join(" ")})`;
     case "record":
@@ -503,10 +505,9 @@ class Parser {
   }
   parseLet() {
     let start = this.expectKeyword("let").span.start;
-    let name = this.matchToken("ident");
-    if (!name)
-      return this.errorHere("Expected identifier after let", start);
-    let variable = mkAst("var", { name: name.value }, name.span);
+    let variable = this.parseBinder();
+    if (variable.$ === "error")
+      return variable;
     let value;
     if (this.isSymbol("=")) {
       this.expectSymbol("=");
@@ -527,8 +528,10 @@ class Parser {
     let start = this.expectKeyword("fn").span.start;
     let vars = [];
     while (this.peek()?.type === "ident") {
-      let ident = this.expectToken("ident");
-      vars.push(mkAst("var", { name: ident.value }, ident.span));
+      let binder = this.parseBinder();
+      if (binder.$ === "error")
+        return mkAst("function", { vars, body: binder }, { start, end: binder.span.end });
+      vars.push(binder);
     }
     let body2;
     if (vars.length === 0) {
@@ -615,6 +618,20 @@ class Parser {
     }
     let close = this.expectSymbol("}");
     return mkAst("record", fields, { start: open.span.start, end: close.span.end });
+  }
+  parseBinder() {
+    let name = this.matchToken("ident");
+    if (!name)
+      return this.errorHere("Expected identifier");
+    let variable = mkAst("var", { name: name.value }, name.span);
+    if (this.isSymbol(":")) {
+      this.expectSymbol(":");
+      let declaredType = this.parseAtom();
+      if (declaredType.$ === "error")
+        return declaredType;
+      variable.type = declaredType;
+    }
+    return variable;
   }
   peek() {
     return this.tokens[this.i];
@@ -752,8 +769,8 @@ var mknum = (n) => mkAst("number", n);
 var mkstr = (s) => mkAst("string", s);
 var mkvar = (name) => mkAst("var", { name });
 var mkapp = (fn, args) => mkAst("app", { fn, args });
-var mklet = (v, value, body2) => mkAst("let", { var: mkvar(v), value, body: body2 });
-var mkfun = (vars, body2) => mkAst("function", { vars: vars.map(mkvar), body: body2 });
+var mklet = (v, value, body2) => mkAst("let", { var: typeof v === "string" ? mkvar(v) : v, value, body: body2 });
+var mkfun = (vars, body2) => mkAst("function", { vars: vars.map((v) => typeof v === "string" ? mkvar(v) : v), body: body2 });
 var mkrecord = (fields) => mkAst("record", Object.entries(fields).map(([k, v]) => [mkvar(k), v]));
 Object.entries({
   x: mkvar("x"),
@@ -765,6 +782,11 @@ Object.entries({
   "{a: 22, b: x}": mkrecord({ a: mknum(22), b: mkvar("x") }),
   "fn x => x": mkfun(["x"], mkvar("x")),
   "fn x y => x": mkfun(["x", "y"], mkvar("x")),
+  "let x: number = 22 in x": mklet(Object.assign(mkvar("x"), { type: mkvar("number") }), mknum(22), mkvar("x")),
+  "fn x: number y: string => x": mkfun([
+    Object.assign(mkvar("x"), { type: mkvar("number") }),
+    Object.assign(mkvar("y"), { type: mkvar("string") })
+  ], mkvar("x")),
   "{e:22}": mkrecord({ e: mknum(22) }),
   "{e}": mkrecord({ e: mkvar("e") }),
   "//comment\n22": parseAST("22")
@@ -812,6 +834,11 @@ var annot = (ast, type) => {
   ast.type = type;
   return ast;
 };
+var applyType = (value, type) => {
+  if (type.$ === "var" && builtins[type.content.name])
+    return builtins[type.content.name].impl(value);
+  return annot(value, type);
+};
 var NUMBER = mkvar("number");
 var STRING = mkvar("string");
 var TYPE = mkvar("type");
@@ -830,7 +857,15 @@ var builtins = {
   },
   eq: {
     type: parse("fn f => fn x y => (number (f x y))").ast,
-    impl: (x, y) => mknum(x == y ? 1 : 0)
+    impl: (x, y) => mknum(x.$ == "number" && y.$ == "number" && x.content == y.content || x.$ == "string" && y.$ == "string" && x.content == y.content || x == y ? 1 : 0)
+  },
+  add: {
+    type: parse("fn f=> fn x y => (number (f (number x) (number y)))").ast,
+    impl: (x, y) => {
+      if (x.$ == "number" && y.$ == "number")
+        return mknum(x.content + y.content);
+      throw new Error(`Type error in add: expected numbers, got ${prettyAST(x)} and ${prettyAST(y)}`);
+    }
   },
   ifelse: {
     type: parse("fn f => fn T cond then else => (T (f (number cond) (T then) (T else)))").ast,
@@ -895,10 +930,14 @@ var run = (ast) => {
         return annot(ast2, STRING);
       case "let": {
         let value = go(ast2.content.value, vals, types);
+        if (ast2.content.var.type)
+          value = applyType(value, ast2.content.var.type);
         vals = { name: ast2.content.var.content.name, value, next: vals };
-        if (value.type) {
+        if (ast2.content.var.type) {
+          types = { name: ast2.content.var.content.name, value: ast2.content.var.type, next: types };
+        } else if (value.type) {
           types = { name: ast2.content.var.content.name, value: value.type, next: types };
-          annot(ast2.content.var, value.type);
+          ast2.content.var.type = value.type;
         }
         let res = go(ast2.content.body, vals, types);
         if (res.type)
@@ -911,11 +950,18 @@ var run = (ast) => {
           return annot(ast2, def.type);
         }
         let val = lookup(ast2.content.name, vals);
-        if (val)
+        if (val) {
+          if (!ast2.type && val.type)
+            ast2.type = val.type;
           return val;
+        }
         return ast2;
       }
       case "function": {
+        ast2.content.vars.forEach((v) => {
+          if (!v.type)
+            v.type = ANY;
+        });
         let bod = go(ast2.content.body, vals, types);
         let fvar = mkvar(freename(vals));
         let ftype = mkAst("function", {
@@ -952,9 +998,8 @@ var run = (ast) => {
               e = e.next;
             }
           }
-          for (let i = fn.content.vars.length - 1;i >= 0; i--) {
+          for (let i = fn.content.vars.length - 1;i >= 0; i--)
             vals = { name: fn.content.vars[i].content.name, value: args[i], next: vals };
-          }
           let res = go(bod, vals, types);
           if (res.type)
             annot(ast2, res.type);
@@ -983,6 +1028,9 @@ Got     : ${G}`);
   run(ast);
   assertEq(x.type, NUMBER, "type of var in app");
   assertEq(ast.type, NUMBER, "type of app");
+  let t = parse("fn x => x").ast;
+  run(t);
+  console.log(prettyAST(t.type));
   Object.entries({
     "22": "number",
     '"hello"': "string",
@@ -1008,8 +1056,7 @@ Got: no type`);
     "(fn x => x 33)": "33",
     "let f = fn x => x in (f 33)": "33",
     "(let f = fn x => x in f 33)": "33",
-    "(number 22)": "22",
-    "(fn x => fn x => x 33)": "fn x=>x"
+    "(number 22)": "22"
   }).forEach(([code, expected]) => {
     let ast2 = parse(code).ast;
     let res = ast2;

@@ -154,6 +154,7 @@ export const editor = (oninput: (s:string)=>void,
       }
       lines[cursor.row] = lines[cursor.row].substring(0, cursor.col) + e.key + lines[cursor.row].substring(cursor.col)
       setCursor({row: cursor.row, col: cursor.col + 1})
+      cursor.selection = undefined
     }
     if (e.key === "Backspace"){
       let range = selrange()

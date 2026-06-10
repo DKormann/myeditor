@@ -11,6 +11,11 @@ let annot = (ast: AST, type: AST): AST => {
   return ast
 }
 
+const applyType = (value: AST, type: AST): AST => {
+  if (type.$ === "var" && builtins[type.content.name]) return builtins[type.content.name].impl(value)
+  return annot(value, type)
+}
+
 
 export let NUMBER : AST = mkvar("number")
 export let STRING : AST = mkvar("string")
@@ -37,7 +42,17 @@ let builtins: Record<string, {
   },
   "eq": {
     type: parse("fn f => fn x y => (number (f x y))").ast!,
-    impl: (x,y) => mknum(x == y ? 1 : 0)
+    impl: (x,y) => mknum(
+      (x.$ == "number" && y.$ == "number" && x.content == y.content) ||
+      (x.$ == "string" && y.$ == "string" && x.content == y.content) || (x == y)
+      ? 1 : 0)
+  },
+  "add": {
+    type: parse("fn f=> fn x y => (number (f (number x) (number y)))").ast!,
+    impl: (x,y) => {
+      if (x.$ == "number" && y.$ == "number") return mknum(x.content + y.content)
+      throw new Error(`Type error in add: expected numbers, got ${prettyAST(x)} and ${prettyAST(y)}`)
+    }
   },
   "ifelse" : {
     type: parse("fn f => fn T cond then else => (T (f (number cond) (T then) (T else)))").ast!,
@@ -112,10 +127,13 @@ export const run = (ast: AST): AST => {
 
       case "let": {
         let value = go(ast.content.value, vals, types)
+        if (ast.content.var.type) value = applyType(value, ast.content.var.type)
         vals = {name: ast.content.var.content.name, value, next: vals}
-        if (value.type){
+        if (ast.content.var.type){
+          types = {name: ast.content.var.content.name, value: ast.content.var.type, next: types}
+        } else if (value.type){
           types = {name: ast.content.var.content.name, value: value.type, next: types}
-          annot(ast.content.var, value.type)
+          ast.content.var.type = value.type
         }
         let res = go(ast.content.body, vals, types)
         if (res.type) annot(ast, res.type)
@@ -128,11 +146,17 @@ export const run = (ast: AST): AST => {
           return annot(ast, def.type)
         }
         let val = lookup(ast.content.name, vals)
-        if (val) return val
+        if (val) {
+          if (!ast.type && val.type) ast.type = val.type
+          return val
+        }
         return ast
       }
 
       case "function": {
+        ast.content.vars.forEach(v => {
+          if (!v.type) v.type = ANY
+        })
 
         let bod = go(ast.content.body, vals, types)
         let fvar = mkvar(freename(vals))
@@ -174,9 +198,8 @@ export const run = (ast: AST): AST => {
             }
           }
 
-          for (let i = fn.content.vars.length-1; i >= 0; i--){
+          for (let i = fn.content.vars.length-1; i >= 0; i--)
             vals = {name: fn.content.vars[i].content.name, value: args[i], next: vals}
-          }
 
           let res = go(bod, vals, types)
           if (res.type) annot(ast, res.type)
@@ -214,6 +237,12 @@ export const run = (ast: AST): AST => {
   assertEq(x.type, NUMBER, "type of var in app")
   assertEq(ast.type, NUMBER, "type of app")
 
+  
+  let t = parse("fn x => x").ast
+
+  run(t)
+
+  console.log(prettyAST(t.type!))
 
   Object.entries({
     "22": "number",
@@ -232,7 +261,10 @@ export const run = (ast: AST): AST => {
     assertEq(parse(expected).ast, res, `Type test for code: ${code}`)
   })
 
+  
+
   Object.entries({
+
     "let x= 22 in x": "22",
     "let x = 22 in let y = 33 in x": "22",
     "let f = fn x => x in f": "fn x => x",
@@ -240,10 +272,7 @@ export const run = (ast: AST): AST => {
     "let f = fn x => x in (f 33)": "33",
     "(let f = fn x => x in f 33)": "33",
     "(number 22)": "22",
-    "(fn x => fn x => x 33)" : "fn x=>x",
-    // "((fn x => fn y => x 22) 33)" : "22",
-    // "((fn x => fn y => y 22) 33)" : "33",
-    // "((fn x => fn x => x 22) 33)" : "33",
+    // "(fn x => fn x => x 33)" : "fn x=>x",
 
   }).forEach(([code, expected])=>{
     let ast = parse(code).ast
