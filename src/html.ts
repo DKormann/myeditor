@@ -57,6 +57,9 @@ export const h1 = html("h1");
 export const h2 = html("h2");
 export const h3 = html("h3");
 export const h4 = html("h4");
+export const table = html("table");
+export const tr = html("tr");
+export const td = html("td");
 
 export const canvas = html("canvas");
 
@@ -114,4 +117,5 @@ export const color = {
 
 body.el.style =`
 background: ${color.background};
+color: ${color.color};
 `

@@ -77,7 +77,7 @@ export const editor = (oninput: (s:string)=>void,
 
             let chr = span(char)
             .style( range && pless({row, col}, range[1]) && plesseq(range[0], {row, col}) ? {backgroundColor: "#8d96ff85", color: color.background} : {})
-            .style(cursor.row === row && scol === col ? {boxShadow: "2px 0 0 0 white inset",} : {})
+            .style(cursor.row === row && scol === col ? {boxShadow: `2px 0 0 0 ${color.color} inset`,} : {})
             chars.push(chr.el)
             elements.set(chr.el, {pos: {row, col}})
             return chr

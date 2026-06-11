@@ -6,13 +6,14 @@ export type Tag <T extends string, C> = {$: T, content: C, span: Span, type?: AS
 
 export type Var = Tag<"var", {name: string}>
 export type Comment = Tag<"comment", string>
+export type Func = Tag<"function", {vars: Var[], body: AST, env? :Env}>
 
 export type ErrorNode = Tag<"error", {message: string, content: string}>
 
 export type AST =
-  | Tag<"function", {vars: Var[], body: AST, env? :Env}>
   | Tag<"app", {fn: AST, args: AST[]}>
   | Var
+  | Func
   | Tag<"number", number>
   | Tag<"string", string>
   | Tag<"let", {var: Var, value: AST, body: AST}>
@@ -24,7 +25,6 @@ export type ParseResult = {ast: AST, comments: Comment[], astmap: (SyntaxNode | 
 
 const hasShownType = (v: Var) => v.type && !(v.type.$ === "var" && v.type.content.name === "any")
 const prettyBinder = (v: Var): string => hasShownType(v) ? `(${prettyAST(v.type!)} ${v.content.name})` : v.content.name
-const prettyTypeBinder = (v: Var): string => v.content.name
 
 export const prettyAST = (node: AST): string =>{
   switch(node.$){
@@ -486,7 +486,7 @@ export let mkstr = (s: string) => mkAst("string", s)
 export let mkvar = (name: string) => mkAst("var", {name})
 export let mkapp = (fn: AST, args: AST[]) => mkAst("app", {fn, args})
 export let mklet = (v: string | Var, value: AST, body: AST) => mkAst("let", {var: typeof v === "string" ? mkvar(v) : v, value, body})
-export let mkfun = (vars: (string | Var)[], body: AST) => mkAst("function", {vars: vars.map(v => typeof v === "string" ? mkvar(v) : v), body})
+export let mkfun = (vars: (string | Var)[], body: AST) => mkAst("function", {vars: vars.map(v => typeof v === "string" ? mkvar(v) : v), body}) as Func
 export let annot = (type: AST, value: AST) => mkAst("annot", {type, value})
 export let mkrecord = (fields: {[key : string] : AST}) => mkAst("record", Object.entries(fields).map(([k,v])=> [mkvar(k), v]))
 

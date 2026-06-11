@@ -3,6 +3,7 @@ import { editor } from "./editor";
 import { parse, prettyAST, type AST, type Span, type SyntaxNode } from "./parser";
 import { getdef } from "./lsp"
 import { run, ANY } from "./runtime"
+import { color } from "./html";
 
 
 if (window.location.origin.includes("localhost"))(async ()=>{
@@ -19,7 +20,7 @@ if (window.location.origin.includes("localhost"))(async ()=>{
 
 
 let outview = html('pre')().style({
-  borderTop: "1px solid white",
+  borderTop: "1px solid "+color.color,
   paddingTop: "16px",
 })
 

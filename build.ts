@@ -12,7 +12,7 @@ setInterval(async () => {
 
   if (newmtimt > last_mtime){
     last_mtime = newmtimt
-    Bun.spawn(["bun", "build", "src/main.ts", "--outdir", "dist"])
+    Bun.spawn(["bun", "build", "src/main.ts", "--outdir", "dist", "--sourcemap=inline"])
     
     version ++
     console.log("built version: ", version)
