@@ -76,7 +76,7 @@ globstyle.textContent = `
   --yellow: #e5c07b;
   --purple: #c678dd;
   --cyan: #56b6c2;
-  --white: #abb2bf;
+
   --gray: #abb2bf88;
   --color: #e7eaf0;
   --background: #2a272a;
@@ -89,8 +89,8 @@ globstyle.textContent = `
       --yellow: #ddb15f;
       --purple: #c678dd;
       --cyan: #56b6c2;
-      --white: #abb2bf;
-      --gray: #abb2bf88;
+
+      --gray: #676a6e88;
       --color: #282c34;
       --background: #ffffff;
 
@@ -108,7 +108,7 @@ export const color = {
   yellow: "var(--yellow)",
   purple: "var(--purple)",
   cyan: "var(--cyan)",
-  white: "var(--white)",
+
   gray: "var(--gray)",
   color: "var(--color)",
   background: "var(--background)"

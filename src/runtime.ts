@@ -21,8 +21,6 @@ TYPE.type = TYPE
 TYPEOF.type = parse("fn f => fn x => type").ast!
 
 
-
-
 export let ANY : AST = mkvar("any")
 
 
@@ -131,8 +129,7 @@ export const run = (ast: AST): AST => {
 
         let value = go(ast.content.value, env)
 
-        
-
+        if (ast.content.var.type == undefined) annot(ast.content.var, value.type!)
         env = bindValue(env, ast.content.var, value, true)
         let res = go(ast.content.body, env)
         if (res.type) annot(ast, res.type)

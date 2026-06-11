@@ -11,7 +11,7 @@ const colorOf = (node: SyntaxNode | undefined): string =>
   (node.$ === "let" || node.$ == "function" ) ? color.blue :
   (node.$ === "app") ? color.green :
   (node.$ === "error") ? color.red :
-  color.white
+  color.color
 
 
 let e = 2 as number
@@ -257,7 +257,7 @@ export const editor = (oninput: (s:string)=>void,
             bottom: (window.innerHeight - e.clientY + 10) + "px",
             backgroundColor: color.background,
             color: color.color,
-            border: "1px solid " + color.white,
+            border: "1px solid " + color.color,
             padding: "8px 12px",
             borderRadius: "4px",
             pointerEvents: "none",
