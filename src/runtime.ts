@@ -16,10 +16,7 @@ let annot = (ast: AST, type: AST): AST => {
   return ast
 }
 
-const applyType = (value: AST, type: AST): AST => {
-  if (type.$ === "var" && builtins[type.content.name]) return builtins[type.content.name].impl(value)
-  return annot(value, type)
-}
+
 
 
 export let NUMBER : AST = mkvar("number")
@@ -91,6 +88,16 @@ export const run = (ast: AST): AST => {
 
   let bind = (env: Env, binder: Var, value: AST): Env => ({binder, value, next: env})
 
+  let bindValue = (env: Env, binder: Var, value: AST, infer = false): Env => {
+
+    let checked = binder.type ?  (binder.type.$ === "var" && builtins[binder.type.content.name]) ? builtins[binder. type.content.name].impl(value)
+    : annot(value, binder.type) : value
+
+
+    if (!binder.type) binder.type = infer ? checked.type ?? ANY : ANY
+    return bind(env, binder, checked)
+  }
+
   const go = (ast: AST, env: Env): AST => {
     switch(ast.$){
       case "number": return annot(ast, NUMBER)
@@ -98,9 +105,7 @@ export const run = (ast: AST): AST => {
 
       case "let": {
         let value = go(ast.content.value, env)
-        if (ast.content.var.type) value = applyType(value, ast.content.var.type)
-        else if (value.type) ast.content.var.type = value.type
-        let res = go(ast.content.body, bind(env, ast.content.var, value))
+        let res = go(ast.content.body, bindValue(env, ast.content.var, value, true))
         if (res.type) annot(ast, res.type)
         return res
       }
@@ -120,11 +125,10 @@ export const run = (ast: AST): AST => {
       }
 
       case "function": {
-        let funenv = env
+        if (ast.content. env == undefined) ast.content.env = env
+        let funenv = ast.content.env
         for (let i = ast.content.vars.length - 1; i >= 0; i--) {
-          let v = ast.content.vars[i]
-          v.type = v.type ?? ANY
-          funenv = bind(funenv, v, v)
+          funenv = bindValue(funenv, ast.content.vars[i], ast.content.vars[i])
         }
         let bod = go(ast.content.body, funenv)
         let fvar = mkvar(freename(env))
@@ -157,11 +161,8 @@ export const run = (ast: AST): AST => {
           if (fn.content.vars.length !== args.length) throw new Error(`Expected ${fn.content.vars.length} arguments, got ${args.length}`)
 
           let callenv = fn.content.env
-          for (let i = fn.content.vars.length - 1; i >= 0; i--) {
-            let binder = fn.content.vars[i]
-            let value = binder.type ? applyType(args[i], binder.type) : args[i]
-            callenv = bind(callenv, binder, value)
-          }
+          if (callenv == undefined) throw new Error("Function has no environment")
+          for (let i = fn.content.vars.length - 1; i >= 0; i--) callenv = bindValue(callenv, fn.content.vars[i], args[i])
 
           let res = go(fn.content.body, callenv)
           if (res.type) annot(ast, res.type)

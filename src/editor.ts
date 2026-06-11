@@ -1,19 +1,17 @@
-import {div, html, p, span} from "./html"
-import { getdef } from "./lsp"
-import { Span, type AST, type SyntaxNode } from "./parser"
+import {div, html, p, span, color} from "./html"
+import { type SyntaxNode } from "./parser"
 
 type Pos = { col: number, row: number }
 
-const colorOf = (node: SyntaxNode | undefined): string => {
-  if (node == undefined) return "#848484"
-  if (node.$ === "comment") return "#6f7b86"
-  if (node.$ === "number" || node.$ === "string" ) return "#d3af21"
-  if (node.$ === "var") return "#f983ef"
-  if (node.$ === "let" || node.$ == "function" ) return "#5b8fff"
-  if (node.$ === "app") return "#50e37c"
-  if (node.$ === "error") return "#ff0000"
-  return "#ffffff"
-}
+const colorOf = (node: SyntaxNode | undefined): string => 
+  (node == undefined) ? color.gray :
+  (node.$ === "comment") ? color.gray :
+  (node.$ === "number" || node.$ === "string" ) ? color.yellow :
+  (node.$ === "var") ? color.purple :
+  (node.$ === "let" || node.$ == "function" ) ? color.blue :
+  (node.$ === "app") ? color.green :
+  (node.$ === "error") ? color.red :
+  color.white
 
 
 let e = 2 as number
@@ -78,7 +76,7 @@ export const editor = (oninput: (s:string)=>void,
           (char,col)=>{
 
             let chr = span(char)
-            .style( range && pless({row, col}, range[1]) && plesseq(range[0], {row, col}) ? {backgroundColor: "#8d96ff85", color: "black"} : {})
+            .style( range && pless({row, col}, range[1]) && plesseq(range[0], {row, col}) ? {backgroundColor: "#8d96ff85", color: color.background} : {})
             .style(cursor.row === row && scol === col ? {boxShadow: "2px 0 0 0 white inset",} : {})
             chars.push(chr.el)
             elements.set(chr.el, {pos: {row, col}})
@@ -257,9 +255,9 @@ export const editor = (oninput: (s:string)=>void,
             position: "fixed",
             left: e.clientX + "px",
             bottom: (window.innerHeight - e.clientY + 10) + "px",
-            backgroundColor: "#0a0a0a",
-            color: "rgb(200, 200, 234)",
-            border: "1px solid #ffffff55",
+            backgroundColor: color.background,
+            color: color.color,
+            border: "1px solid " + color.white,
             padding: "8px 12px",
             borderRadius: "4px",
             pointerEvents: "none",

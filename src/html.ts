@@ -9,7 +9,6 @@ export type NODE <H extends HTMLElement = HTMLElement> =  {
   assign: (htmlProps: Partial<HTMLElement>) => NODE
 }
 
-
 export type ARG = NODE | string | ((e:MouseEvent)=>void)
 
 export const html = <K extends keyof HTMLElementTagNameMap> (tag:K) => (...children:ARG[]): NODE <HTMLElementTagNameMap[K]> => {
@@ -49,8 +48,6 @@ export const fromHTML  = <H extends HTMLElement>  (el:H): NODE <H> => {
   return node
 }
 
-document.createElement
-
 
 export const div = html("div");
 export const span = html("span");
@@ -64,3 +61,57 @@ export const h4 = html("h4");
 export const canvas = html("canvas");
 
 export const button = html("button");
+
+
+
+let globstyle = document.createElement("style")
+globstyle.textContent = `
+  body{
+  --red: #e06c75;
+  --green: #98c379;
+  --blue: #61afef;
+  --yellow: #e5c07b;
+  --purple: #c678dd;
+  --cyan: #56b6c2;
+  --white: #abb2bf;
+  --gray: #abb2bf88;
+  --color: #e7eaf0;
+  --background: #2a272a;
+  }
+  @media (prefers-color-scheme: light) {
+    body{
+      --red: #e06c75;
+      --green: #98c379;
+      --blue: #419fec;
+      --yellow: #ddb15f;
+      --purple: #c678dd;
+      --cyan: #56b6c2;
+      --white: #abb2bf;
+      --gray: #abb2bf88;
+      --color: #282c34;
+      --background: #ffffff;
+
+    }
+  }
+`
+
+document.head.appendChild(globstyle)
+
+
+export const color = {
+  red: "var(--red)",
+  green: "var(--green)",
+  blue: "var(--blue)",
+  yellow: "var(--yellow)",
+  purple: "var(--purple)",
+  cyan: "var(--cyan)",
+  white: "var(--white)",
+  gray: "var(--gray)",
+  color: "var(--color)",
+  background: "var(--background)"
+}
+
+
+body.el.style =`
+background: ${color.background};
+`

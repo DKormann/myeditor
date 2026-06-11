@@ -7,6 +7,8 @@ export type Tag <T extends string, C> = {$: T, content: C, span: Span, type?: AS
 export type Var = Tag<"var", {name: string}>
 export type Comment = Tag<"comment", string>
 
+export type ErrorNode = Tag<"error", {message: string, content: string}>
+
 export type AST =
   | Tag<"function", {vars: Var[], body: AST, env? :Env}>
   | Tag<"app", {fn: AST, args: AST[]}>
@@ -15,22 +17,22 @@ export type AST =
   | Tag<"string", string>
   | Tag<"let", {var: Var, value: AST, body: AST}>
   | Tag<"record", [Var, AST][]>
-  | Tag<"error", {message: string, content: string}>
+  | ErrorNode
 
 export type SyntaxNode = AST | Comment
 export type ParseResult = {ast: AST, comments: Comment[], astmap: (SyntaxNode | undefined)[]}
 
 const hasShownType = (v: Var) => v.type && !(v.type.$ === "var" && v.type.content.name === "any")
-const prettyVar = (v: Var): string => hasShownType(v) ? `${v.content.name}: ${prettyAST(v.type!)}` : v.content.name
-const prettyLetVar = (v: Var): string => hasShownType(v) ? `(${prettyAST(v.type!)} ${v.content.name})` : v.content.name
+const prettyBinder = (v: Var): string => hasShownType(v) ? `(${prettyAST(v.type!)} ${v.content.name})` : v.content.name
+const prettyTypeBinder = (v: Var): string => v.content.name
 
 export const prettyAST = (node: AST): string =>{
   switch(node.$){
     case "number" : return node.content.toString()
     case "string" : return JSON.stringify(node.content)
     case "var": return node.content.name
-    case "let": return `let ${prettyLetVar(node.content.var)} = ${prettyAST(node.content.value)} in\n${prettyAST(node.content.body)}`
-    case "function": return `fn ${node.content.vars.map(prettyVar).join(" ")} => ${prettyAST(node.content.body)}`
+    case "let": return `let ${prettyBinder(node.content.var)} = ${prettyAST(node.content.value)} in\n${prettyAST(node.content.body)}`
+    case "function": return `fn ${node.content.vars.map(prettyBinder).join(" ")} => ${prettyAST(node.content.body)}`
     case "app": return `(${prettyAST(node.content.fn)} ${node.content.args.map(prettyAST).join(" ")})`
     case "record": return `{${node.content.map(([k, v]) => `${k.content.name}: ${prettyAST(v)}`).join(", ")}}`
     case "error": return `[ERROR: ${node.content.message}]`
@@ -221,7 +223,7 @@ class Parser {
   private parseFunction(): AST {
     let start = this.expectKeyword("fn").span.start
     let vars: Var[] = []
-    while (this.peek()?.type === "ident") {
+    while (this.peek()?.type === "ident" || this.isSymbol("(")) {
       let binder = this.parseBinder()
       if (binder.$ === "error") return mkAst("function", {vars, body: binder}, {start, end: binder.span.end})
       vars.push(binder)
@@ -318,6 +320,18 @@ class Parser {
   }
 
   private parseBinder(): Var | Tag<"error", {message: string, content: string}> {
+    if (this.isSymbol("(")) {
+      this.expectSymbol("(")
+      let declaredType = this.parseAtom()
+      let name = this.matchToken("ident")
+      if (!name) return this.errorHere("Expected identifier in binder pattern")
+      if (!this.isSymbol(")")) return this.errorHere("Expected ')' after binder pattern")
+      this.expectSymbol(")")
+      if (declaredType.$ === "error") return declaredType
+      let variable = mkAst("var", {name: name.value}, name.span)
+      variable.type = declaredType
+      return variable
+    }
     let name = this.matchToken("ident")
     if (!name) return this.errorHere("Expected identifier")
     let variable = mkAst("var", {name: name.value}, name.span)
@@ -331,18 +345,6 @@ class Parser {
   }
 
   private parseLetBinder(): Var | Tag<"error", {message: string, content: string}> {
-    if (this.isSymbol("(")) {
-      this.expectSymbol("(")
-      let declaredType = this.parseAtom()
-      let name = this.matchToken("ident")
-      if (!name) return this.errorHere("Expected identifier in let binder pattern")
-      if (!this.isSymbol(")")) return this.errorHere("Expected ')' after let binder pattern")
-      this.expectSymbol(")")
-      if (declaredType.$ === "error") return declaredType
-      let variable = mkAst("var", {name: name.value}, name.span)
-      variable.type = declaredType
-      return variable
-    }
     return this.parseBinder()
   }
 
@@ -395,12 +397,12 @@ class Parser {
     return token.type
   }
 
-  private errorNode(message: string, span?: Span, content?: string): AST {
+  private errorNode(message: string, span?: Span, content?: string): ErrorNode {
     let finalSpan = span ?? this.pointSpan()
     return mkAst("error", {message, content: content ?? this.source.slice(finalSpan.start.offset, finalSpan.end.offset)}, finalSpan)
   }
 
-  private errorHere(message: string, start?: Pos): AST {
+  private errorHere(message: string, start?: Pos):ErrorNode {
     let span = this.peek()?.span ?? {start: this.eof, end: this.eof}
     return this.errorNode(message, {start: start ?? span.start, end: span.end})
   }
@@ -499,7 +501,7 @@ Object.entries({
   "fn x => x": mkfun(["x"], mkvar("x")),
   "fn x y => x": mkfun(["x", "y"], mkvar("x")),
   "let (number x) = 22 in x": mklet(Object.assign(mkvar("x"), {type: mkvar("number")}), mknum(22), mkvar("x")),
-  "fn x: number y: string => x": mkfun([
+  "fn (number x) (string y) => x": mkfun([
     Object.assign(mkvar("x"), {type: mkvar("number")}),
     Object.assign(mkvar("y"), {type: mkvar("string")}),
   ], mkvar("x")),

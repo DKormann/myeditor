@@ -56,12 +56,7 @@ let Edit = editor(s=> {
   }
 )
 
-body.style({
-  padding: "44px",
-  color: "white",
-  backgroundColor: "black",
-  fontFamily: "sans-serif",
-})
+body.style({padding: "44px",fontFamily: "sans-serif",})
 
 
 let buttn = (t:string, onClick:() => void) => span(t, onClick).style({color: "gray", border: "1px solid gray", borderRadius: "4px", padding: "2px 4px", marginRight: "8px"})
@@ -118,7 +113,5 @@ body.append(
   buttn("about", () => Edit.setText(about_text)),
   buttn("github", () => window.open("https://github.com/dkormann/myeditor"))
 )
-
-
 
 

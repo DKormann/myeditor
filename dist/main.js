@@ -34,7 +34,6 @@ var fromHTML = (el) => {
   };
   return node;
 };
-document.createElement;
 var div = html("div");
 var span = html("span");
 var p = html("p");
@@ -45,25 +44,55 @@ var h3 = html("h3");
 var h4 = html("h4");
 var canvas = html("canvas");
 var button = html("button");
+var globstyle = document.createElement("style");
+globstyle.textContent = `
+  body{
+  --red: #e06c75;
+  --green: #98c379;
+  --blue: #61afef;
+  --yellow: #e5c07b;
+  --purple: #c678dd;
+  --cyan: #56b6c2;
+  --white: #abb2bf;
+  --gray: #abb2bf88;
+  --color: #e7eaf0;
+  --background: #2a272a;
+  }
+  @media (prefers-color-scheme: light) {
+    body{
+      --red: #e06c75;
+      --green: #98c379;
+      --blue: #419fec;
+      --yellow: #ddb15f;
+      --purple: #c678dd;
+      --cyan: #56b6c2;
+      --white: #abb2bf;
+      --gray: #abb2bf88;
+      --color: #282c34;
+      --background: #ffffff;
+
+    }
+  }
+`;
+document.head.appendChild(globstyle);
+var color = {
+  red: "var(--red)",
+  green: "var(--green)",
+  blue: "var(--blue)",
+  yellow: "var(--yellow)",
+  purple: "var(--purple)",
+  cyan: "var(--cyan)",
+  white: "var(--white)",
+  gray: "var(--gray)",
+  color: "var(--color)",
+  background: "var(--background)"
+};
+body.el.style = `
+background: ${color.background};
+`;
 
 // src/editor.ts
-var colorOf = (node) => {
-  if (node == undefined)
-    return "#848484";
-  if (node.$ === "comment")
-    return "#6f7b86";
-  if (node.$ === "number" || node.$ === "string")
-    return "#d3af21";
-  if (node.$ === "var")
-    return "#f983ef";
-  if (node.$ === "let" || node.$ == "function")
-    return "#5b8fff";
-  if (node.$ === "app")
-    return "#50e37c";
-  if (node.$ === "error")
-    return "#ff0000";
-  return "#ffffff";
-};
+var colorOf = (node) => node == undefined ? color.gray : node.$ === "comment" ? color.gray : node.$ === "number" || node.$ === "string" ? color.yellow : node.$ === "var" ? color.purple : node.$ === "let" || node.$ == "function" ? color.blue : node.$ === "app" ? color.green : node.$ === "error" ? color.red : color.white;
 var editor = (oninput, getAstMap, goToDef, hoverInfo) => {
   let lines = localStorage.getItem("lines")?.split(`
 `) ?? [""];
@@ -97,9 +126,9 @@ var editor = (oninput, getAstMap, goToDef, hoverInfo) => {
     let mkcolor = () => {
       chars.forEach((c, i) => {
         let ast = astmap[i];
-        let color = colorOf(ast);
-        if (color)
-          c.style.color = color;
+        let color2 = colorOf(ast);
+        if (color2)
+          c.style.color = color2;
         else
           c.style.color = "";
         elements.get(c).ast = ast;
@@ -108,7 +137,7 @@ var editor = (oninput, getAstMap, goToDef, hoverInfo) => {
     let range = selrange();
     el.replaceChilren(...lines.map((line, row) => {
       let par = p(...line.split("").concat(" ").map((char, col) => {
-        let chr = span(char).style(range && pless({ row, col }, range[1]) && plesseq(range[0], { row, col }) ? { backgroundColor: "#8d96ff85", color: "black" } : {}).style(cursor.row === row && scol === col ? { boxShadow: "2px 0 0 0 white inset" } : {});
+        let chr = span(char).style(range && pless({ row, col }, range[1]) && plesseq(range[0], { row, col }) ? { backgroundColor: "#8d96ff85", color: color.background } : {}).style(cursor.row === row && scol === col ? { boxShadow: "2px 0 0 0 white inset" } : {});
         chars.push(chr.el);
         elements.set(chr.el, { pos: { row, col } });
         return chr;
@@ -284,9 +313,9 @@ var editor = (oninput, getAstMap, goToDef, hoverInfo) => {
             position: "fixed",
             left: e.clientX + "px",
             bottom: window.innerHeight - e.clientY + 10 + "px",
-            backgroundColor: "#0a0a0a",
-            color: "rgb(200, 200, 234)",
-            border: "1px solid #ffffff55",
+            backgroundColor: color.background,
+            color: color.color,
+            border: "1px solid " + color.white,
             padding: "8px 12px",
             borderRadius: "4px",
             pointerEvents: "none",
@@ -339,8 +368,7 @@ var editor = (oninput, getAstMap, goToDef, hoverInfo) => {
 
 // src/parser.ts
 var hasShownType = (v) => v.type && !(v.type.$ === "var" && v.type.content.name === "any");
-var prettyVar = (v) => hasShownType(v) ? `${v.content.name}: ${prettyAST(v.type)}` : v.content.name;
-var prettyLetVar = (v) => hasShownType(v) ? `(${prettyAST(v.type)} ${v.content.name})` : v.content.name;
+var prettyBinder = (v) => hasShownType(v) ? `(${prettyAST(v.type)} ${v.content.name})` : v.content.name;
 var prettyAST = (node) => {
   switch (node.$) {
     case "number":
@@ -350,10 +378,10 @@ var prettyAST = (node) => {
     case "var":
       return node.content.name;
     case "let":
-      return `let ${prettyLetVar(node.content.var)} = ${prettyAST(node.content.value)} in
+      return `let ${prettyBinder(node.content.var)} = ${prettyAST(node.content.value)} in
 ${prettyAST(node.content.body)}`;
     case "function":
-      return `fn ${node.content.vars.map(prettyVar).join(" ")} => ${prettyAST(node.content.body)}`;
+      return `fn ${node.content.vars.map(prettyBinder).join(" ")} => ${prettyAST(node.content.body)}`;
     case "app":
       return `(${prettyAST(node.content.fn)} ${node.content.args.map(prettyAST).join(" ")})`;
     case "record":
@@ -529,7 +557,7 @@ class Parser {
   parseFunction() {
     let start = this.expectKeyword("fn").span.start;
     let vars = [];
-    while (this.peek()?.type === "ident") {
+    while (this.peek()?.type === "ident" || this.isSymbol("(")) {
       let binder = this.parseBinder();
       if (binder.$ === "error")
         return mkAst("function", { vars, body: binder }, { start, end: binder.span.end });
@@ -622,6 +650,21 @@ class Parser {
     return mkAst("record", fields, { start: open.span.start, end: close.span.end });
   }
   parseBinder() {
+    if (this.isSymbol("(")) {
+      this.expectSymbol("(");
+      let declaredType = this.parseAtom();
+      let name2 = this.matchToken("ident");
+      if (!name2)
+        return this.errorHere("Expected identifier in binder pattern");
+      if (!this.isSymbol(")"))
+        return this.errorHere("Expected ')' after binder pattern");
+      this.expectSymbol(")");
+      if (declaredType.$ === "error")
+        return declaredType;
+      let variable2 = mkAst("var", { name: name2.value }, name2.span);
+      variable2.type = declaredType;
+      return variable2;
+    }
     let name = this.matchToken("ident");
     if (!name)
       return this.errorHere("Expected identifier");
@@ -636,21 +679,6 @@ class Parser {
     return variable;
   }
   parseLetBinder() {
-    if (this.isSymbol("(")) {
-      this.expectSymbol("(");
-      let declaredType = this.parseAtom();
-      let name = this.matchToken("ident");
-      if (!name)
-        return this.errorHere("Expected identifier in let binder pattern");
-      if (!this.isSymbol(")"))
-        return this.errorHere("Expected ')' after let binder pattern");
-      this.expectSymbol(")");
-      if (declaredType.$ === "error")
-        return declaredType;
-      let variable = mkAst("var", { name: name.value }, name.span);
-      variable.type = declaredType;
-      return variable;
-    }
     return this.parseBinder();
   }
   peek() {
@@ -803,7 +831,7 @@ Object.entries({
   "fn x => x": mkfun(["x"], mkvar("x")),
   "fn x y => x": mkfun(["x", "y"], mkvar("x")),
   "let (number x) = 22 in x": mklet(Object.assign(mkvar("x"), { type: mkvar("number") }), mknum(22), mkvar("x")),
-  "fn x: number y: string => x": mkfun([
+  "fn (number x) (string y) => x": mkfun([
     Object.assign(mkvar("x"), { type: mkvar("number") }),
     Object.assign(mkvar("y"), { type: mkvar("string") })
   ], mkvar("x")),
@@ -860,11 +888,6 @@ var annot = (ast, type) => {
   ast.type = type;
   return ast;
 };
-var applyType = (value, type) => {
-  if (type.$ === "var" && builtins[type.content.name])
-    return builtins[type.content.name].impl(value);
-  return annot(value, type);
-};
 var NUMBER = mkvar("number");
 var STRING = mkvar("string");
 var TYPE = mkvar("type");
@@ -916,6 +939,12 @@ var run = (ast) => {
     return `x${n}`;
   };
   let bind = (env, binder, value) => ({ binder, value, next: env });
+  let bindValue = (env, binder, value, infer = false) => {
+    let checked = binder.type ? binder.type.$ === "var" && builtins[binder.type.content.name] ? builtins[binder.type.content.name].impl(value) : annot(value, binder.type) : value;
+    if (!binder.type)
+      binder.type = infer ? checked.type ?? ANY : ANY;
+    return bind(env, binder, checked);
+  };
   const go = (ast2, env) => {
     switch (ast2.$) {
       case "number":
@@ -924,11 +953,7 @@ var run = (ast) => {
         return annot(ast2, STRING);
       case "let": {
         let value = go(ast2.content.value, env);
-        if (ast2.content.var.type)
-          value = applyType(value, ast2.content.var.type);
-        else if (value.type)
-          ast2.content.var.type = value.type;
-        let res = go(ast2.content.body, bind(env, ast2.content.var, value));
+        let res = go(ast2.content.body, bindValue(env, ast2.content.var, value, true));
         if (res.type)
           annot(ast2, res.type);
         return res;
@@ -947,11 +972,11 @@ var run = (ast) => {
         return ast2;
       }
       case "function": {
-        let funenv = env;
+        if (ast2.content.env == undefined)
+          ast2.content.env = env;
+        let funenv = ast2.content.env;
         for (let i = ast2.content.vars.length - 1;i >= 0; i--) {
-          let v = ast2.content.vars[i];
-          v.type = v.type ?? ANY;
-          funenv = bind(funenv, v, v);
+          funenv = bindValue(funenv, ast2.content.vars[i], ast2.content.vars[i]);
         }
         let bod = go(ast2.content.body, funenv);
         let fvar = mkvar(freename(env));
@@ -980,11 +1005,10 @@ var run = (ast) => {
           if (fn.content.vars.length !== args.length)
             throw new Error(`Expected ${fn.content.vars.length} arguments, got ${args.length}`);
           let callenv = fn.content.env;
-          for (let i = fn.content.vars.length - 1;i >= 0; i--) {
-            let binder = fn.content.vars[i];
-            let value = binder.type ? applyType(args[i], binder.type) : args[i];
-            callenv = bind(callenv, binder, value);
-          }
+          if (callenv == undefined)
+            throw new Error("Function has no environment");
+          for (let i = fn.content.vars.length - 1;i >= 0; i--)
+            callenv = bindValue(callenv, fn.content.vars[i], args[i]);
           let res = go(fn.content.body, callenv);
           if (res.type)
             annot(ast2, res.type);
@@ -1109,12 +1133,7 @@ var Edit = editor((s) => {
     return;
   return node.$ + ": " + (node.type ? prettyAST(node.type) : node.$ == "var" ? prettyAST(getdef(ast, node)?.type ?? ANY) : "XX");
 });
-body.style({
-  padding: "44px",
-  color: "white",
-  backgroundColor: "black",
-  fontFamily: "sans-serif"
-});
+body.style({ padding: "44px", fontFamily: "sans-serif" });
 var buttn = (t, onClick) => span(t, onClick).style({ color: "gray", border: "1px solid gray", borderRadius: "4px", padding: "2px 4px", marginRight: "8px" });
 var about_text = `
 
