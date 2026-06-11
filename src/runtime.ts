@@ -27,15 +27,18 @@ export let ANY : AST = mkvar("any")
 let primitiveType = (name: string) => ({
   type: TYPE,
   impl: (x: AST) => {
-    if (x.$ == "var"){
-      if (x.type){
-        if (x.type.$ == "var" && x.type.content.name == name) return x
-        throw new Error(`Type error: expected ${name}, got ${prettyAST(x.type)}`)
-      }
-      return annot(x, mkvar(name))
+    if (x.type) {
+      if (x.type.$ == "var" && x.type.content.name == name) return x
+      throw new Error(`Type error: expected ${name}, got ${prettyAST(x.type)}`)
+
+
     }
-    else if (x.$ == name) return annot(x, mkvar(name))
-    throw new Error(`Type error: expected ${name}, got ${prettyAST(x)}`)
+
+    return annot(x, mkvar(name))
+    // if (x.$ == "var")  annot(x, mkvar(name))
+    // else if (x.$ == name) return annot(x, mkvar(name))
+
+    // throw new Error(`Type error: expected ${name}, got ${prettyAST(x)}`)
   }
 })
 
@@ -170,7 +173,8 @@ export const run = (ast: AST): AST => {
 
           return res
         }
-        throw new Error(`Cannot apply non-function ${prettyAST(fn)}`)
+        // throw new Error(`Cannot apply non-function ${prettyAST(fn)}`)
+        return mkapp(fn, args)
       }
       default: return ast
     }

@@ -95,7 +95,7 @@ let T = fn f=> fn x => (number (f (number x))) in
 
 let idn_ = (T id) in
 
-let r= (id "2") in
+let r = (id "2") in
 
 // this is will result in type error.
 // let BAD = (idn_ "2") in
