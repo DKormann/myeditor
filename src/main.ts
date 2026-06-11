@@ -6,14 +6,55 @@ import { run, ANY } from "./runtime"
 import { color } from "./html";
 
 
+
+const about_text = `
+
+// This is a toy code editor still in development.
+
+// the goal is to build a language with:
+
+// extremely minimal syntax
+// first class support for types as values
+// first cass LSP programng in a straightforward way.
+
+// hover over x to see its inferred type
+let n = 22 in
+
+// this is how types are annotated. types are essentially just functions over values.
+let k = (number 33) in
+let u = (string "hllo") in
+
+// untyped id
+let id = fn x => x in
+
+// number typed id
+let idn = fn x => (number x) in
+
+// type of number -> number
+let T = fn f => fn (number x) => (number (f x)) in
+
+let _id = (T id) in
+
+//let bad = (_id "e") in
+
+let r = (id "2") in
+
+// this is will result in type error.
+// let BAD = (idn_ "2") in
+
+(number st)
+`
+
+
 if (window.location.origin.includes("localhost"))(async ()=>{
-  let version = await fetch("/version").then(res => res.text())
-  .catch(e=>"0")
+  let version = await fetch("/version").then(res => res.text()).catch(e=>"0")
   while (true){
     await new Promise(r => setTimeout(r, 100))
     try{
       if (await fetch("/version").then(res => res.text()).catch(e=>"0")!= version) window.location.reload()
-    }catch(e){break;}
+    }catch(e){
+      break;
+    }
   }
 })();
 
@@ -30,7 +71,9 @@ let currentAstMap: (SyntaxNode | undefined)[] = []
 
 let code:string = ''
 
-let Edit = editor(s=> {
+let Edit = editor(
+  localStorage.getItem("lines") ?? about_text,
+  s=> {
     try{
       let parsed = parse(s)
       ast = parsed.ast
@@ -61,47 +104,6 @@ body.style({padding: "44px",fontFamily: "sans-serif",})
 
 
 let buttn = (t:string, onClick:() => void) => span(t, onClick).style({color: "gray", border: "1px solid gray", borderRadius: "4px", padding: "2px 4px", marginRight: "8px"})
-
-let about_text = `
-
-// This is a toy code editor still in development.
-
-// the goal is to build a language with:
-
-// extremely minimal syntax
-// first class support for types as values
-// first cass LSP programng in a straightforward way.
-
-
-// hover over x to see its inferred type
-let n = 22 in
-
-// this is how types are annotated. types are essentially just functions over values.
-let k = (number 33) in
-let u = (string "hllo") in
-
-
-// untyped id
-let id = fn x => x in
-
-
-// number typed id
-let idn = fn x => (number x) in
-
-// type of number -> number
-let T = fn f=> fn x => (number (f (number x))) in
-
-// annoted id
-
-let idn_ = (T id) in
-
-let r = (id "2") in
-
-// this is will result in type error.
-// let BAD = (idn_ "2") in
-
-(id 2)
-`
 
 body.append(
   div(

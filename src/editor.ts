@@ -16,14 +16,14 @@ const colorOf = (node: SyntaxNode | undefined): string =>
 
 let e = 2 as number
 
-export const editor = (oninput: (s:string)=>void,
+export const editor = (code: string, oninput: (s:string)=>void,
   getAstMap : ()=> (SyntaxNode|undefined)[],
   goToDef : (ast: SyntaxNode) => void,
   hoverInfo: (ast: SyntaxNode) => string | undefined,
 
 ) => {
 
-  let lines = localStorage.getItem("lines")?.split("\n") ?? [""]
+  let lines = code.split("\n")
   let cursor : Pos & {selection? : Pos} = {col:0, row:0};
 
   let el = html("pre")()
@@ -91,7 +91,7 @@ export const editor = (oninput: (s:string)=>void,
     mkcolor()
 
     if (hist[hist.length - 1] != code) {
-      localStorage.setItem("lines", code)
+      // localStorage.setItem("lines", code)
       oninput(code)
       hist.push(code)
       astmap = getAstMap()
