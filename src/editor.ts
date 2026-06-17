@@ -8,7 +8,7 @@ const colorOf = (node: SyntaxNode | undefined): string =>
   (node.$ === "comment") ? color.gray :
   (node.$ === "number" || node.$ === "string" ) ? color.yellow :
   (node.$ === "var") ? color.purple :
-  (node.$ === "let" || node.$ == "function" ) ? color.blue :
+  (node.$ === "let" || node.$ == "function" ) ? color.cyan :
   (node.$ === "app") ? color.green :
   (node.$ === "error") ? color.red :
   color.color
@@ -16,11 +16,12 @@ const colorOf = (node: SyntaxNode | undefined): string =>
 
 let e = 2 as number
 
-export const editor = (code: string, oninput: (s:string)=>void,
+export const editor = (
+  code: string,
+  oninput: (s:string)=>void,
   getAstMap : ()=> (SyntaxNode|undefined)[],
   goToDef : (ast: SyntaxNode) => void,
-  hoverInfo: (ast: SyntaxNode) => string | undefined,
-
+  hoverInfo: (ast: SyntaxNode) => [string, (SyntaxNode|undefined)[] ]
 ) => {
 
   let lines = code.split("\n")
@@ -91,7 +92,6 @@ export const editor = (code: string, oninput: (s:string)=>void,
     mkcolor()
 
     if (hist[hist.length - 1] != code) {
-      // localStorage.setItem("lines", code)
       oninput(code)
       hist.push(code)
       astmap = getAstMap()
@@ -249,9 +249,10 @@ export const editor = (code: string, oninput: (s:string)=>void,
     }else{
       let ast = elements.get(e.target as HTMLElement)?.ast
       if (ast) {
-        let info = hoverInfo(ast)
+        let [info, astmap] = hoverInfo(ast)
         if (info) {
-          let tooltip = div(info).style({
+          let tooltip = div(...info.split('').map((c,i)=>span(c).style({color: colorOf(astmap[i])})))
+          .style({
             position: "fixed",
             left: e.clientX + "px",
             bottom: (window.innerHeight - e.clientY + 10) + "px",

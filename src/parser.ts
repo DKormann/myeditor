@@ -1,4 +1,6 @@
-import {type Env} from "./runtime"
+
+export type Env = {binder: Var, value: AST, next: Env} | [Env, Env] | null
+
 export type Pos = {offset: number, line: number, col: number}
 export type Span = {start: Pos, end: Pos}
 
@@ -27,12 +29,16 @@ const hasShownType = (v: Var) => v.type && !(v.type.$ === "var" && v.type.conten
 const prettyBinder = (v: Var): string => hasShownType(v) ? `(${prettyAST(v.type!)} ${v.content.name})` : v.content.name
 
 export const prettyAST = (node: AST): string =>{
+  const _prettyEnv = ((env:Env) : string => (env === null) ? "]]"
+    : (Array.isArray(env)) ? "[[" + _prettyEnv(env[0]) + " | [[" + _prettyEnv(env[1])
+    : env.binder.content.name + ", " + _prettyEnv(env.next));
+
   switch(node.$){
     case "number" : return node.content.toString()
     case "string" : return JSON.stringify(node.content)
     case "var": return node.content.name
     case "let": return `let ${prettyBinder(node.content.var)} = ${prettyAST(node.content.value)} in\n${prettyAST(node.content.body)}`
-    case "function": return `fn ${node.content.vars.map(prettyBinder).join(" ")} => ${prettyAST(node.content.body)}`
+    case "function": return `${node.content.env? "ENV: [["+ _prettyEnv(node.content.env) : ""}fn ${node.content.vars.map(prettyBinder).join(" ")} => ${prettyAST(node.content.body)}`
     case "app": return `(${prettyAST(node.content.fn)} ${node.content.args.map(prettyAST).join(" ")})`
     case "record": return `{${node.content.map(([k, v]) => `${k.content.name}: ${prettyAST(v)}`).join(", ")}}`
     case "error": return `[ERROR: ${node.content.message}]`
@@ -486,7 +492,7 @@ export let mkstr = (s: string) => mkAst("string", s)
 export let mkvar = (name: string) => mkAst("var", {name})
 export let mkapp = (fn: AST, args: AST[]) => mkAst("app", {fn, args})
 export let mklet = (v: string | Var, value: AST, body: AST) => mkAst("let", {var: typeof v === "string" ? mkvar(v) : v, value, body})
-export let mkfun = (vars: (string | Var)[], body: AST) => mkAst("function", {vars: vars.map(v => typeof v === "string" ? mkvar(v) : v), body}) as Func
+export let mkfun = (vars: (string | Var)[], body: AST, env? :Env) => mkAst("function", {vars: vars.map(v => typeof v === "string" ? mkvar(v) : v), body, env}) as Func
 export let annot = (type: AST, value: AST) => mkAst("annot", {type, value})
 export let mkrecord = (fields: {[key : string] : AST}) => mkAst("record", Object.entries(fields).map(([k,v])=> [mkvar(k), v]))
 

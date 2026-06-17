@@ -1,3 +1,7 @@
+
+
+
+
 import { body, html, span , fromHTML, h2, div} from "./html";
 import { editor } from "./editor";
 import { parse, prettyAST, type AST, type Span, type SyntaxNode } from "./parser";
@@ -46,18 +50,6 @@ let r = (id "2") in
 `
 
 
-if (window.location.origin.includes("localhost"))(async ()=>{
-  let version = await fetch("/version").then(res => res.text()).catch(e=>"0")
-  while (true){
-    await new Promise(r => setTimeout(r, 100))
-    try{
-      if (await fetch("/version").then(res => res.text()).catch(e=>"0")!= version) window.location.reload()
-    }catch(e){
-      break;
-    }
-  }
-})();
-
 
 
 let outview = html('pre')().style({
@@ -94,11 +86,23 @@ let Edit = editor(
     if (def) Edit.setCursor({row: def.span.start.line-1, col: def.span.start.col-1})
   },
   (node) => {
-    if (node.$ === "comment") return undefined
+    if (node.$ === "comment") return ['', []]
 
-    return node.$ + ": " + (node.type ? prettyAST(node.type) : (node.$ == "var" ? prettyAST(getdef(ast!, node)?.type ?? ANY) : "XX"))
+    let str = (node.$ + ": ")
+    let map : (SyntaxNode | undefined)[] = str.split('').map(c=> undefined)
+
+    let ast:AST = node.type ? node.type : ANY
+
+    let co = prettyAST(ast)
+    map.push(...parse(co).astmap)
+    str += co
+
+    return [str, map]
   }
 )
+
+
+
 
 body.style({padding: "44px",fontFamily: "sans-serif",})
 

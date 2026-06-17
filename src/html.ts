@@ -60,6 +60,7 @@ export const h4 = html("h4");
 export const table = html("table");
 export const tr = html("tr");
 export const td = html("td");
+export const pre = html("pre")
 
 export const canvas = html("canvas");
 
@@ -75,21 +76,20 @@ globstyle.textContent = `
   --blue: #61afef;
   --yellow: #e5c07b;
   --purple: #c678dd;
-  --cyan: #56b6c2;
-
+  --cyan: #6eeeff;
   --gray: #abb2bf88;
   --color: #e7eaf0;
-  --background: #2a272a;
+  --background: #222122;
   }
   @media (prefers-color-scheme: light) {
     body{
-      --red: #e06c75;
-      --green: #98c379;
-      --blue: #419fec;
-      --yellow: #ddb15f;
-      --purple: #c678dd;
-      --cyan: #56b6c2;
-
+      --red: #f10f22;
+      --green: #54c801;
+      --blue: #1f32ff;
+      --yellow: #d39e3d;
+      --brown: #c55d00;
+      --purple: #a61fd0;
+      --cyan: #0baebc;
       --gray: #676a6e88;
       --color: #282c34;
       --background: #ffffff;

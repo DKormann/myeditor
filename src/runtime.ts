@@ -1,28 +1,19 @@
+import { ARG, body, color, div, NODE, p, pre } from "./html"
+import {Env, mknum, type AST, type Func} from "./parser"
+import {parse, prettyAST, mkvar, mkapp, mkfun, mklet, Var} from "./parser"
 
-import { body, color, div, table, td, tr } from "./html"
-import {mknum, Tag, type AST} from "./parser"
-import {parse, prettyAST, mkAst, mkvar, mkapp, mkfun, mklet, Var} from "./parser"
-
-let annot = (ast: AST, type: AST): AST & {type: AST} => {
-  if (ast.type && prettyAST(ast.type) != prettyAST(type)) throw new Error(`Type error: expected ${prettyAST(type)}, got ${prettyAST(ast.type)}`)
-  ast.type = type
-  return ast as AST & {type: AST}
-
-}
 
 export let NUMBER : AST = mkvar("number")
 export let STRING : AST = mkvar("string")
 export let TYPE : AST = mkvar("type")
-export let TYPEOF: AST = mkvar("typeof")
+export let TYPEOF: AST = mkvar("typeof");
 
 NUMBER.type = TYPE
 STRING.type = TYPE
 TYPE.type = TYPE
 TYPEOF.type = parse("fn f => fn x => type").ast!
 
-
 export let ANY : AST = mkvar("any")
-
 
 let primitiveType = (name: string) => ({
   type: TYPE,
@@ -30,15 +21,9 @@ let primitiveType = (name: string) => ({
     if (x.type) {
       if (x.type.$ == "var" && x.type.content.name == name) return x
       throw new Error(`Type error: expected ${name}, got ${prettyAST(x.type)}`)
-
-
     }
-
-    return annot(x, mkvar(name))
-    // if (x.$ == "var")  annot(x, mkvar(name))
-    // else if (x.$ == name) return annot(x, mkvar(name))
-
-    // throw new Error(`Type error: expected ${name}, got ${prettyAST(x)}`)
+    x.type = mkvar(name)
+    return x
   }
 })
 
@@ -67,24 +52,30 @@ let builtins: Record<string, { type: AST, impl: (...args:AST[]) => AST }> = {
     }
   },
   "typeof": {
-    type: parse("fn f => fn x => (type (f x))").ast!,
+    type: parse("fn f => fn x => type").ast!,
     impl: (x) => {
       if (!x.type) return mkapp(TYPEOF, [x])
       return x.type
     }
   }
 }
-export type Env = {binder: Var, value: AST, next: Env} | null
 
-let prettyEnv = (env: Env): string => {
-  if (!env) return "{}"
-  return `{${env.binder.content.name} : ${prettyAST(env.value.type ?? ANY)} = ${prettyAST(env.value)}} -> ` + prettyEnv(env.next)
+
+let DEBUG = 0
+
+let loggerPre = pre()
+
+body.replaceChilren(loggerPre)
+
+let debug = (...args: string[]) => {
+  if (DEBUG) loggerPre.append(pre(args.join(" ")).style({border: "1px solid " + color.color, padding:".4em", borderRadius: ".3em", margin:".4em"}))
 }
 
 export const run = (ast: AST): AST => {
 
-  let lookup = (name: string, env: Env): Env => {
+  let lookup = (name: string, env: Env): {binder: Var, value: AST} | null => {
     if (!env) return null
+    if (Array.isArray(env)) return lookup(name, env[0]) || lookup(name, env[1])
     if (env.binder.content.name === name) return env
     return lookup(name, env.next)
   }
@@ -105,147 +96,152 @@ export const run = (ast: AST): AST => {
 
   }
 
-  const go = (ast: AST, env: Env): AST => {
+  let annot = (ast: AST, type?: AST): AST => {
+    if (type == undefined) throw new Error("Cannot annotate with undefined type")
+    if (ast.type && prettyAST(ast.type) != prettyAST(type)) throw new Error(`Type error: expected ${prettyAST(type)}, got ${prettyAST(ast.type)}`)
+    ast.type = type
+    return ast
+  }
+
+  const _go = (ast: AST, env: Env): AST => {
+    let call = (fn : AST, args: AST[]): AST => {
+      debug("Calling", prettyAST(fn), "with args", args.map(prettyAST).join("\n"))
+      if (fn.$ == "var" && builtins[fn.content.name]) throw new Error("not implemented")
+      if (fn.$ == "function"){
+        if (fn.content.vars.length !== args.length) throw new Error(`Expected ${fn.content.vars.length} arguments, got ${args.length}`)
+        if (fn.content.env === undefined) throw new Error("Function has no environment")
+        return go(
+          fn.content.body,
+          fn.content.vars.reduce((env, v, i) => bindValue(env, v, args[i], true), fn.content.env as Env)
+        )
+      }
+      return mkapp(fn,args)
+
+    }
+
     switch(ast.$){
-      case "number": {
-        ast.type = NUMBER
-        return ast as AST & {type: AST}
-      }
-      case "string":{
-        ast.type = STRING
-        return ast as AST & {type: AST}
-      }
+      case "number": return annot(ast, NUMBER)
+      case "string": return annot(ast, STRING)
 
       case "var": {
-        if (builtins[ast.content.name]) {
-          let def = builtins[ast.content.name]
-          return annot(ast, def.type)
-        }
-        let hit = lookup(ast.content.name, env)
-        if (hit) {
-          if (hit.binder.type) annot(ast, hit.binder.type)
-          return hit.value
-        }
-        return ast
+        if (builtins[ast.content.name]) annot(ast, builtins[ast.content.name].type)
+        let hit = lookup(ast.content.name, [env, {binder: ast ,value: ast, next: null}])!
+        if (hit.binder.type) annot(ast, hit.binder.type)
+        return hit.value
+
       }
       case "let": {
-
         let value = go(ast.content.value, env)
-
-        if (ast.content.var.type == undefined) annot(ast.content.var, value.type!)
-        env = bindValue(env, ast.content.var, value, true)
-        let res = go(ast.content.body, env)
-        if (res.type) annot(ast, res.type)
+        annot(ast.content.var, value.type!)
+        let res = go(ast.content.body, bindValue(env, ast.content.var, value, true))
+        annot(ast, res.type)
         return res
       }
       case "function":{
         if (ast.content.env == undefined) ast.content.env = env
-
-        let body = go(
-          ast.content.body,
-          ast.content.vars.reduce((env, v) => bind(env, v, v), ast.content.env as Env)
-        )
-
+        let runbod = call(ast, ast.content.vars)
         let fvar = mkvar(freename(env))
-        let ftype: AST = mkfun( [fvar], mkfun(ast.content.vars, ast.content.body.type ?? mkapp(TYPEOF, [body])))
-        annot(ast, ftype)
-        let res = mkfun(ast.content.vars, body)
-        res.content.env = ast.content.env
-        return annot(res, ftype)
+        let ftype = mkfun([fvar], mkfun(ast.content.vars, runbod))
+        return annot(mkfun(ast.content.vars, runbod, ast.content.env), ftype)
       }
 
       case "app": {
         let fn = go(ast.content.fn, env)
         let args = ast.content.args.map(arg => go(arg, env))
-
-        if (fn.$ == "var" && builtins[fn.content.name]) {
-          let res = builtins[fn.content.name].impl(...args)
-          if (res.type) annot(ast, res.type)
-          return res
-        }
-        if (fn.$ == "function"){
-
-          if (fn.content.vars.length !== args.length) throw new Error(`Expected ${fn.content.vars.length} arguments, got ${args.length}`)
-          let callenv = fn.content.env as Env;
-          callenv = fn.content.vars.reduce((env, v, i) => bindValue(env, v, args[i], true), callenv)
-          let res = go(fn.content.body, callenv)
-          if (res.type) annot(ast, res.type)
-
-          return res
-        }
-        // throw new Error(`Cannot apply non-function ${prettyAST(fn)}`)
-        return mkapp(fn, args)
+        let res = call(fn, args)
+        if (res.type) annot(ast, res.type)
+        return res
       }
       default: return ast
     }
+  }
+
+  const go = (ast: AST, env: Env): AST => {
+    let res = _go(ast, env)
+    debug("AST:", prettyAST(ast), "\nType:", prettyAST(res.type ?? ANY), "\n->", prettyAST(res))
+    let restype = res.type;
+    if (restype) annot(ast, restype)
+    return res
   }
   return go(ast, null)
 }
 
 
-let samples = [
-  "22 | number | 22",
-  'let x = 22 in x | number | 22',
-  'let (number x) = 22 in x | number | 22',
-  'fn x => x | fn x0 => fn x => (typeof x)',
-  '(number 22) | number | 22',
-  'fn (number x) => x | fn x0 => fn (number x) => number | fn (number x) => x',
-  'fn x => (number x) | fn x0 => fn (number x) => number',
-  '(fn x => x 22) | number',
-  '(fn (number x) => x 22) | number',
-  '(fn (string x) => x 22) | error',
-  'let id = fn x => x in fn y => (id y) | fn x0 => fn y => (typeof y) | fn y => y',
-  'fn (number x) => (string x) | error',
-].map(code => code.split("|").map(s => s.trim()))
+
+DEBUG = 1
+
+let ast = parse('(fn x => fn y => x 3)').ast
+let res = run(ast!)
+
+DEBUG = 0
 
 
-let results = table().style({
-  width: "100%",
-  whiteSpace: "pre",
-})
+// let samples = [
+//   "22 | number | 22",
+//   'let x = 22 in x | number | 22',
+//   'let (number x) = 22 in x | number | 22',
+//   'fn x => x | fn x0 => fn x => (typeof x)',
+//   '(number 22) | number | 22',
+//   'fn (number x) => x | fn x0 => fn (number x) => number | fn (number x) => x',
+//   'fn x => (number x) | fn x0 => fn (number x) => number',
+//   '(fn x => x 22) | number',
+//   '(fn (number x) => x 22) | number',
+//   '(fn (string x) => x 22) | error',
+//   'let id = fn x => x in fn y => (id y) | fn x0 => fn y => (typeof y) | fn y => y',
+//   'fn (number x) => (string x) | error',
+//   'fn x => fn y => y | fn x0 => fn x => fn x0 => fn y => (typeof y)',
+//   'fn x => fn y => x | fn x0 => fn x => fn x0 => fn y => (typeof x)',
+//   '(fn x=> fn y => x 3) | fn x0 => fn y => number',
+//   '((fn x=> fn y=> x 3) 2) | number | 3'
+
+// ].map(code => code.split("|").map(s => s.trim()))
 
 
-
-
-for (let [code, expectedType, expectedResult] of samples){
-
-  let ast = parse(code)
-  let res : AST | undefined = undefined
-
-  try{
-    res = run(ast.ast)
-  }catch(e){
-    if (expectedType != "error") console.error(`Error running code: ${code}\n`, e)
-  }
-
-  let typeStr = res ? res.type ? prettyAST(res.type) : "no type" : "error"
-  let resStr = res ? prettyAST(res) : "error"
-
-  let check = (typeStr == (expectedType ?? typeStr) && resStr == (expectedResult ?? resStr))
+// let results = table().style({
+//   width: "100%",
+//   whiteSpace: "pre",
+// })
 
 
 
 
-  if (!check) {
-    results.append(
-      tr(
-        td(code),
-        td(typeStr).style({color: typeStr == (expectedType ?? typeStr) ? "green" : "red", padding: "0 8px"}),
-        td(resStr).style({color: resStr == (expectedResult ?? resStr) ? "green" : "red"})
-      )
-      .style({
-        borderBottom: "1px solid "+color.color,
-      })
-    )
-    body.append(div(results)
-    .style({
-      position: "absolute",
-      border: "1px solid "+color.color,
-      padding: "16px",
-      backgroundColor: color.background,
-    }))
-  }
-}    
+// for (let [code, expectedType, expectedResult] of samples){
+
+//   let ast = parse(code)
+//   let res : AST | undefined = undefined
+
+//   let errmessage: string = ""
+//   try{ res = run(ast.ast)
+//   } catch(e) {
+//     errmessage = String(e)
+//     if (expectedType != "error") console.error(`Error running code: ${code}\n`, e)
+//   }
+
+//   let typeStr = res ? res.type ? prettyAST(res.type) : "no type" : "error"
+//   let resStr = res ? prettyAST(res) : "error"
+//   let check = (typeStr == (expectedType ?? typeStr) && resStr == (expectedResult ?? resStr))
+
+//   typeStr = typeStr == "error" ? errmessage : typeStr
+//   resStr = resStr == "error" ? errmessage : resStr
+
+//   if (!check) {
+//     results.append(
+//       tr(
+//         td(code),
+//         td(typeStr).style({color: typeStr == (expectedType ?? typeStr) ? "green" : "red", padding: "0 8px"}),
+//         td(resStr).style({color: resStr == (expectedResult ?? resStr) ? "green" : "red"})
+//       )
+//       .style({borderBottom: "1px solid "+color.color,})
+//     )
+//     body.append(div(results)
+//     .style({
+//       position: "absolute",
+//       border: "1px solid "+color.color,
+//       padding: "16px",
+//       backgroundColor: color.background,
+//     }))
+//   }
+// }    
 
 
 

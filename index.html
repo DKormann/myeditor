@@ -8,6 +8,21 @@
   </style>
 </head>
 <body>
+
+  <script> 
+    if (window.location.origin.includes("localhost"))(async ()=>{
+      let version = await fetch("/version").then(res => res.text()).catch(e=>"0")
+      while (true){
+        await new Promise(r => setTimeout(r, 100))
+        try{
+          if (await fetch("/version").then(res => res.text()).catch(e=>"0")!= version) window.location.reload()
+        }catch(e){
+          break;
+        }
+      }
+    })();
+
+  </script>
   <script type="module" src="./dist/main.js"></script>
 </body>
 </html>
