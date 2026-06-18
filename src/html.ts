@@ -4,8 +4,9 @@ export type NODE <H extends HTMLElement = HTMLElement> =  {
   $ : "NODE",
   el: H,
   append: (...children: (NODE | string)[]) => NODE,
+  onclick: (f:(e:MouseEvent) => void)=> NODE,
   replaceChilren: (...children: (NODE | string)[]) => NODE,
-  style: (styles: Partial<CSSStyleDeclaration>) => NODE,
+  style: (styles: Partial<CSSStyleDeclaration>) => NODE<H>,
   assign: (htmlProps: Partial<HTMLElement>) => NODE
 }
 
@@ -21,6 +22,7 @@ export const html = <K extends keyof HTMLElementTagNameMap> (tag:K) => (...child
 
 
 export const fromHTML  = <H extends HTMLElement>  (el:H): NODE <H> => {
+
   let node : NODE<H> = {
     $: "NODE",
     el,
@@ -28,9 +30,12 @@ export const fromHTML  = <H extends HTMLElement>  (el:H): NODE <H> => {
       children.forEach(child => {
         if (typeof child === "string") el.appendChild(document.createTextNode(child));
         else el.appendChild(child.el);
-
       });
-      return fromHTML(el);
+      return node;
+    },
+    onclick: (f:(e:MouseEvent) => void) => {
+      el.onclick = f
+      return node
     },
     replaceChilren: (...children:(NODE| string)[]) => {
       el.replaceChildren()

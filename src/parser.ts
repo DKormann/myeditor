@@ -28,17 +28,19 @@ export type ParseResult = {ast: AST, comments: Comment[], astmap: (SyntaxNode | 
 const hasShownType = (v: Var) => v.type && !(v.type.$ === "var" && v.type.content.name === "any")
 const prettyBinder = (v: Var): string => hasShownType(v) ? `(${prettyAST(v.type!)} ${v.content.name})` : v.content.name
 
+export const prettyEnv = (env: Env) => "[[" + _prettyEnv(env)
+
+const  _prettyEnv = ((env:Env) : string => (env === null) ? "]]"
+  : (Array.isArray(env)) ? "[[" + _prettyEnv(env[0]) + " | [[" + _prettyEnv(env[1])
+  : env.binder.content.name + ", " + _prettyEnv(env.next));
 export const prettyAST = (node: AST): string =>{
-  const _prettyEnv = ((env:Env) : string => (env === null) ? "]]"
-    : (Array.isArray(env)) ? "[[" + _prettyEnv(env[0]) + " | [[" + _prettyEnv(env[1])
-    : env.binder.content.name + ", " + _prettyEnv(env.next));
 
   switch(node.$){
     case "number" : return node.content.toString()
     case "string" : return JSON.stringify(node.content)
     case "var": return node.content.name
     case "let": return `let ${prettyBinder(node.content.var)} = ${prettyAST(node.content.value)} in\n${prettyAST(node.content.body)}`
-    case "function": return `${node.content.env? "ENV: [["+ _prettyEnv(node.content.env) : ""}fn ${node.content.vars.map(prettyBinder).join(" ")} => ${prettyAST(node.content.body)}`
+    case "function": return `${node.content.env? "ENV: [["+ prettyEnv(node.content.env) : ""}fn ${node.content.vars.map(prettyBinder).join(" ")} => ${prettyAST(node.content.body)}`
     case "app": return `(${prettyAST(node.content.fn)} ${node.content.args.map(prettyAST).join(" ")})`
     case "record": return `{${node.content.map(([k, v]) => `${k.content.name}: ${prettyAST(v)}`).join(", ")}}`
     case "error": return `[ERROR: ${node.content.message}]`

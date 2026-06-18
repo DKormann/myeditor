@@ -1,5 +1,6 @@
-import { ARG, body, color, div, NODE, p, pre } from "./html"
-import {Env, mknum, type AST, type Func} from "./parser"
+import { colorOf } from "./editor"
+import { ARG, body, color, div, NODE, p, pre, span } from "./html"
+import {Env, mknum, prettyEnv, type AST, type Func} from "./parser"
 import {parse, prettyAST, mkvar, mkapp, mkfun, mklet, Var} from "./parser"
 
 
@@ -60,16 +61,79 @@ let builtins: Record<string, { type: AST, impl: (...args:AST[]) => AST }> = {
   }
 }
 
-
 let DEBUG = 0
 
 let loggerPre = pre()
 
 body.replaceChilren(loggerPre)
 
-let debug = (...args: string[]) => {
-  if (DEBUG) loggerPre.append(pre(args.join(" ")).style({border: "1px solid " + color.color, padding:".4em", borderRadius: ".3em", margin:".4em"}))
+
+const astView = (ast: AST): NODE => {
+
+
+  let _view = (ast: AST): NODE => {
+    let el = span()
+    switch(ast.$){
+      case "number":
+      case "string": return el.append(String(ast.content)).style({color: color.blue})  
+      case "var": return el.append(ast.content.name)
+      case "function": return el.append( ast.content.env ? prettyEnv(ast.content.env) : "" , "fn (",...ast.content.vars.map(go),") => ").append(go(ast.content.body))
+      case "app": return el.append("(", go(ast.content.fn), " ", ...ast.content.args.map(arg=>go(arg)), ")")
+      case "let": return el.append("let ", ast.content.var.content.name, " = ", go(ast.content.value), " in ", go(ast.content.body))
+      default: return el.append(`[${ast.$}]`)
+    }  
+  }
+
+  let go = (ast:AST): NODE => {
+    let el = span(_view(ast)).style({color: colorOf(ast), cursor: "pointer"})
+    .onclick(e=>{
+      el.replaceChilren(
+        span("TYPE:").style({color: color.gray})
+        .onclick(e=>{
+          el.replaceChilren(_view(ast))
+          e.stopImmediatePropagation()
+        }),
+        ast.type ? astView(ast.type) : "*",
+        go(ast)
+      )
+      e.stopPropagation()
+    })
+    return el
+  }
+  return div(go(ast)).style({padding:".4em", border: "1px solid "+color.gray, borderRadius: ".4em", margin:".4em 0"})
+
 }
+
+
+
+type Vis = NODE|string| undefined | null | AST | Vis[] | number
+
+let debug = (...args: Vis[]) => {
+  if (!DEBUG) return
+  let pr = loggerPre
+  for (let arg of args){
+    if (typeof arg == "string" || typeof arg == "number") pr.append(String(arg))
+    else if (Array.isArray(arg)) ["[", ...arg, "]"].forEach(a=> debug(a))
+    else if (arg === undefined || arg === null) pr.append(span(String(arg)).style({color: color.gray}))
+    else if ("$" in arg){
+      if (arg.$ == "NODE") pr.append(arg)
+      else pr.append(astView(arg))
+    }
+  }
+}
+
+let debugCall = <ARGS extends any[], T> (fn: (...args: ARGS) => T) => (...args: ARGS) : T => {
+  debug("@ ", fn.name, ...args)
+  let oldpre = loggerPre
+  let callpre = pre().style({borderLeft: "4px solid "+color.gray, marginLeft: "8px", paddingLeft: "8px"})
+  loggerPre.append(callpre)
+  loggerPre = callpre
+  let res = fn(...args)
+  loggerPre = oldpre
+  debug(res as any)
+  return res
+}
+
 
 export const run = (ast: AST): AST => {
 
@@ -103,9 +167,10 @@ export const run = (ast: AST): AST => {
     return ast
   }
 
-  const _go = (ast: AST, env: Env): AST => {
-    let call = (fn : AST, args: AST[]): AST => {
-      debug("Calling", prettyAST(fn), "with args", args.map(prettyAST).join("\n"))
+  let go = (ast: AST, env: Env): AST => {
+
+    if (env) debug(prettyEnv(env))
+    let call = (fn : AST, args: AST[] ): AST =>{
       if (fn.$ == "var" && builtins[fn.content.name]) throw new Error("not implemented")
       if (fn.$ == "function"){
         if (fn.content.vars.length !== args.length) throw new Error(`Expected ${fn.content.vars.length} arguments, got ${args.length}`)
@@ -116,8 +181,8 @@ export const run = (ast: AST): AST => {
         )
       }
       return mkapp(fn,args)
-
     }
+    call = debugCall(call)
 
     switch(ast.$){
       case "number": return annot(ast, NUMBER)
@@ -156,22 +221,22 @@ export const run = (ast: AST): AST => {
     }
   }
 
-  const go = (ast: AST, env: Env): AST => {
-    let res = _go(ast, env)
-    debug("AST:", prettyAST(ast), "\nType:", prettyAST(res.type ?? ANY), "\n->", prettyAST(res))
-    let restype = res.type;
-    if (restype) annot(ast, restype)
-    return res
-  }
+  go = debugCall(go)
   return go(ast, null)
 }
 
 
+// let F = (x:number, y:string) => x
+// type arg = typeof F extends (...args: infer A) => any ? A : never
+
 
 DEBUG = 1
 
+
 let ast = parse('(fn x => fn y => x 3)').ast
 let res = run(ast!)
+
+
 
 DEBUG = 0
 
