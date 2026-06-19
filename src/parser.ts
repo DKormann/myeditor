@@ -26,22 +26,6 @@ export type AST =
 export type SyntaxNode = AST | Comment
 export type ParseResult = {ast: AST, comments: Comment[], astmap: (SyntaxNode | undefined)[]}
 
-const hasShownType = (v: Var) => v.type && !(v.type.$ === "var" && v.type.content.name === "any")
-const prettyBinder = (v: Var): string => hasShownType(v) ? `(${prettyAST(v.type!)} ${v.content.name})` : v.content.name
-
-
-export const prettyAST = (node: AST): string =>{
-  switch(node.$){
-    case "number" : return node.content.toString()
-    case "string" : return JSON.stringify(node.content)
-    case "var": return node.content.name
-    case "let": return `let ${prettyBinder(node.content.var)} = ${prettyAST(node.content.value)} in\n${prettyAST(node.content.body)}`
-    case "function": return `fn ${node.content.vars.map(prettyBinder).join(" ")} => ${prettyAST(node.content.body)}`
-    case "app": return `(${prettyAST(node.content.fn)} ${node.content.args.map(prettyAST).join(" ")})`
-    case "record": return `{${node.content.map(([k, v]) => `${k.content.name}: ${prettyAST(v)}`).join(", ")}}`
-    case "error": return `[ERROR: ${node.content.message}]`
-  }
-}
 
 
 const zeroPos = (): Pos => ({offset: 0, line: 1, col: 1})

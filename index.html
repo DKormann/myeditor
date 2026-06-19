@@ -12,10 +12,19 @@
   <script> 
     if (window.location.origin.includes("localhost"))(async ()=>{
       let version = await fetch("/version").then(res => res.text()).catch(e=>"0")
+
+      await fetch("/builderr").then(err => err.text()).then(err=>{
+        if (!err.length) return 
+        let errmsg = document.createElement("pre")
+        errmsg.style.color = "red"
+        errmsg.textContent = err
+        document.body.replaceChildren(errmsg)
+      })
       while (true){
         await new Promise(r => setTimeout(r, 100))
         try{
           if (await fetch("/version").then(res => res.text()).catch(e=>"0")!= version) window.location.reload()
+
         }catch(e){
           break;
         }

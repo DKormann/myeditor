@@ -4,14 +4,14 @@
 
 import { body, html, span , fromHTML, h2, div} from "./html";
 import { editor } from "./editor";
-import { parse, prettyAST, type AST, type Span, type SyntaxNode } from "./parser";
+import { parse, type AST, type Span, type SyntaxNode } from "./parser";
 import { getdef } from "./lsp"
-import { ANY, run } from "./runtime"
+import { ANY, prettyAST, run } from "./runtime"
 import { color } from "./html";
 
 
 
-const about_text = `
+const about_text : string = `
 
 // This is a toy code editor still in development.
 
@@ -47,7 +47,7 @@ let r = (id "2") in
 // let BAD = (idn_ "2") in
 
 (number st)
-`
+`;
 
 
 
@@ -65,14 +65,16 @@ let code:string = ''
 
 let Edit = editor(
   localStorage.getItem("lines") ?? about_text,
-  s=> {
+  (code)=> {
     try{
-      let parsed = parse(s)
+
+      let parsed = parse(code)
       ast = parsed.ast
       currentAstMap = parsed.astmap
-      code = s
+      code = code
       let res = run(ast)
       outview.el.textContent = prettyAST(res)
+      localStorage.setItem("lines", code)
 
     }catch(e){
       ast = undefined

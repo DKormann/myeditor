@@ -5,6 +5,9 @@ import {stat} from "fs/promises"
 
 let version = 0
 let last_mtime = 0
+
+let builderr: string = ""
+
 setInterval(async () => {
 
   let newmtimt = await (readdir("src").then((ds:string[]) =>
@@ -12,8 +15,9 @@ setInterval(async () => {
 
   if (newmtimt > last_mtime){
     last_mtime = newmtimt
-    Bun.spawn(["bun", "build", "src/main.ts", "--outdir", "dist", "--sourcemap=inline"])
-    
+    await Bun.spawn(["bun", "build", "src/main.ts", "--outdir", "dist", "--sourcemap=inline"], {
+      stderr: "pipe"
+    }).stderr.text().then(err=>{builderr = err})
     version ++
     console.log("built version: ", version)
   }
@@ -42,6 +46,7 @@ Bun.serve({
       }
       return new Response(await file.arrayBuffer(), {headers: {"Content-Type": "application/javascript"}})
     },
+    "/builderr": (req)=> new Response(builderr),
     "/version": async (req) => {
       return new Response(version.toString())
     }
