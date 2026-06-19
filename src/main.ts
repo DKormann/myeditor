@@ -6,7 +6,7 @@ import { body, html, span , fromHTML, h2, div} from "./html";
 import { editor } from "./editor";
 import { parse, prettyAST, type AST, type Span, type SyntaxNode } from "./parser";
 import { getdef } from "./lsp"
-import { run, ANY } from "./runtime"
+import { ANY, run } from "./runtime"
 import { color } from "./html";
 
 

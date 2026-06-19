@@ -3,7 +3,7 @@ import { type SyntaxNode } from "./parser"
 
 type Pos = { col: number, row: number }
 
-export const colorOf = (node: SyntaxNode | undefined): string => 
+export const colorOf = (node: SyntaxNode | any): string => 
   (node == undefined) ? color.gray :
   (node.$ === "comment") ? color.gray :
   (node.$ === "number" || node.$ === "string" ) ? color.yellow :

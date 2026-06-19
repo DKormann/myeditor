@@ -1,13 +1,11 @@
 import { colorOf } from "./editor"
-import { ARG, body, color, div, NODE, p, pre, span } from "./html"
-import {Env, mknum, prettyEnv, type AST, type Func} from "./parser"
-import {parse, prettyAST, mkvar, mkapp, mkfun, mklet, Var} from "./parser"
-
+import { body, color, div, NODE, pre, span } from "./html"
+import {mknum, Prim, Tag, type AST, type Func, parse, mkvar, mkapp, Var, prettyAST, mkAst, mkfun} from "./parser"
 
 export let NUMBER : AST = mkvar("number")
 export let STRING : AST = mkvar("string")
-export let TYPE : AST = mkvar("type")
-export let TYPEOF: AST = mkvar("typeof");
+export let TYPE   : AST = mkvar("type")
+export let TYPEOF : AST = mkvar("typeof")
 
 NUMBER.type = TYPE
 STRING.type = TYPE
@@ -21,7 +19,7 @@ let primitiveType = (name: string) => ({
   impl: (x: AST) => {
     if (x.type) {
       if (x.type.$ == "var" && x.type.content.name == name) return x
-      throw new Error(`Type error: expected ${name}, got ${prettyAST(x.type)}`)
+      throw new Error(`Type error: expected ${name}, got ${(x.type)}`)
     }
     x.type = mkvar(name)
     return x
@@ -31,28 +29,28 @@ let primitiveType = (name: string) => ({
 let builtins: Record<string, { type: AST, impl: (...args:AST[]) => AST }> = {
   number: primitiveType("number"),
   string: primitiveType("string"),
-  "eq": {
+  eq: {
     type: parse("fn f => fn x y => (number (f x y))").ast!,
     impl: (x,y) => mknum(
       (x.$ == "number" && y.$ == "number" && x.content == y.content) ||
       (x.$ == "string" && y.$ == "string" && x.content == y.content) || (x == y)
       ? 1 : 0)
   },
-  "add": {
+  add: {
     type: parse("fn f=> fn x y => (number (f (number x) (number y)))").ast!,
     impl: (x,y) => {
       if (x.$ == "number" && y.$ == "number") return mknum(x.content + y.content)
       throw new Error(`Type error in add: expected numbers, got ${prettyAST(x)} and ${prettyAST(y)}`)
     }
   },
-  "ifelse" : {
+  ifelse : {
     type: parse("fn f => fn T cond then else => (T (f (number cond) (T then) (T else)))").ast!,
     impl: (cond, then, els) => {
       let val = cond.$ == "number" ? cond.content : cond.$ == "string" ? cond.content.length : 1
       return val ? then : els
     }
   },
-  "typeof": {
+  typeof: {
     type: parse("fn f => fn x => type").ast!,
     impl: (x) => {
       if (!x.type) return mkapp(TYPEOF, [x])
@@ -62,51 +60,11 @@ let builtins: Record<string, { type: AST, impl: (...args:AST[]) => AST }> = {
 }
 
 let DEBUG = 0
-
 let loggerPre = pre()
-
 body.replaceChilren(loggerPre)
 
 
-const astView = (ast: AST): NODE => {
-
-
-  let _view = (ast: AST): NODE => {
-    let el = span()
-    switch(ast.$){
-      case "number":
-      case "string": return el.append(String(ast.content)).style({color: color.blue})  
-      case "var": return el.append(ast.content.name)
-      case "function": return el.append( ast.content.env ? prettyEnv(ast.content.env) : "" , "fn (",...ast.content.vars.map(go),") => ").append(go(ast.content.body))
-      case "app": return el.append("(", go(ast.content.fn), " ", ...ast.content.args.map(arg=>go(arg)), ")")
-      case "let": return el.append("let ", ast.content.var.content.name, " = ", go(ast.content.value), " in ", go(ast.content.body))
-      default: return el.append(`[${ast.$}]`)
-    }  
-  }
-
-  let go = (ast:AST): NODE => {
-    let el = span(_view(ast)).style({color: colorOf(ast), cursor: "pointer"})
-    .onclick(e=>{
-      el.replaceChilren(
-        span("TYPE:").style({color: color.gray})
-        .onclick(e=>{
-          el.replaceChilren(_view(ast))
-          e.stopImmediatePropagation()
-        }),
-        ast.type ? astView(ast.type) : "*",
-        go(ast)
-      )
-      e.stopPropagation()
-    })
-    return el
-  }
-  return div(go(ast)).style({padding:".4em", border: "1px solid "+color.gray, borderRadius: ".4em", margin:".4em 0"})
-
-}
-
-
-
-type Vis = NODE|string| undefined | null | AST | Vis[] | number
+type Vis = NODE | string | undefined | null | AST | Vis[] | number
 
 let debug = (...args: Vis[]) => {
   if (!DEBUG) return
@@ -135,178 +93,91 @@ let debugCall = <ARGS extends any[], T> (fn: (...args: ARGS) => T) => (...args: 
 }
 
 
-export const run = (ast: AST): AST => {
-
-  let lookup = (name: string, env: Env): {binder: Var, value: AST} | null => {
-    if (!env) return null
-    if (Array.isArray(env)) return lookup(name, env[0]) || lookup(name, env[1])
-    if (env.binder.content.name === name) return env
-    return lookup(name, env.next)
-  }
-
-  let freename = (env:Env):string=>{
-    let n = 0
-    while(lookup(`x${n}`, env)) n++
-    return `x${n}`
-  }
-  let bind = (env: Env, binder: Var, value: AST): Env => ({binder, value, next: env})
-  let bindValue = (env: Env, binder: Var, value: AST, infer = false): Env => {
-
-    if (binder.type)
-      if (value.type && prettyAST(binder.type) != prettyAST(value.type!))
-        throw new Error(`Type error in let: expected ${prettyAST(binder.type)}, got ${prettyAST(value.type!)}`)
-    else binder.type = value.type
-    return bind(env, binder, value)
-
-  }
-
-  let annot = (ast: AST, type?: AST): AST => {
-    if (type == undefined) throw new Error("Cannot annotate with undefined type")
-    if (ast.type && prettyAST(ast.type) != prettyAST(type)) throw new Error(`Type error: expected ${prettyAST(type)}, got ${prettyAST(ast.type)}`)
-    ast.type = type
-    return ast
-  }
-
-  let go = (ast: AST, env: Env): AST => {
-
-    if (env) debug(prettyEnv(env))
-    let call = (fn : AST, args: AST[] ): AST =>{
-      if (fn.$ == "var" && builtins[fn.content.name]) throw new Error("not implemented")
-      if (fn.$ == "function"){
-        if (fn.content.vars.length !== args.length) throw new Error(`Expected ${fn.content.vars.length} arguments, got ${args.length}`)
-        if (fn.content.env === undefined) throw new Error("Function has no environment")
-        return go(
-          fn.content.body,
-          fn.content.vars.reduce((env, v, i) => bindValue(env, v, args[i], true), fn.content.env as Env)
-        )
-      }
-      return mkapp(fn,args)
-    }
-    call = debugCall(call)
-
+let astView = (ast: AST | Value): NODE => {
+  let _view = (ast: AST | Value): NODE => {
+    let el = span()
     switch(ast.$){
-      case "number": return annot(ast, NUMBER)
-      case "string": return annot(ast, STRING)
-
-      case "var": {
-        if (builtins[ast.content.name]) annot(ast, builtins[ast.content.name].type)
-        let hit = lookup(ast.content.name, [env, {binder: ast ,value: ast, next: null}])!
-        if (hit.binder.type) annot(ast, hit.binder.type)
-        return hit.value
-
-      }
-      case "let": {
-        let value = go(ast.content.value, env)
-        annot(ast.content.var, value.type!)
-        let res = go(ast.content.body, bindValue(env, ast.content.var, value, true))
-        annot(ast, res.type)
-        return res
-      }
-      case "function":{
-        if (ast.content.env == undefined) ast.content.env = env
-        let runbod = call(ast, ast.content.vars)
-        let fvar = mkvar(freename(env))
-        let ftype = mkfun([fvar], mkfun(ast.content.vars, runbod))
-        return annot(mkfun(ast.content.vars, runbod, ast.content.env), ftype)
-      }
-
-      case "app": {
-        let fn = go(ast.content.fn, env)
-        let args = ast.content.args.map(arg => go(arg, env))
-        let res = call(fn, args)
-        if (res.type) annot(ast, res.type)
-        return res
-      }
-      default: return ast
-    }
+      case "number":
+      case "string": return el.append(String(ast.content)).style({color: color.blue})  
+      case "var": return el.append(ast.content.name)
+      case "function": return el.append( "fn (",...ast.content.vars.map(go),") => ").append(go(ast.content.body))
+      case "app": return el.append("(", go(ast.content.fn), " ", ...ast.content.args.map(arg=>go(arg)), ")")
+      case "let": return el.append("let ", ast.content.var.content.name, " = ", go(ast.content.value), " in ", go(ast.content.body))
+      default: return el.append(`[${ast.$}]`)
+    }  
   }
+  let go = (ast:AST|Value): NODE => {
+    let el = span(_view(ast)).style({color: colorOf(ast), cursor: "pointer"})
+    .onclick(e=>{
+      el.replaceChilren(
+        span("TYPE:").style({color: color.gray})
+        .onclick(e=>{
+          el.replaceChilren(_view(ast))
+          e.stopImmediatePropagation()
+        }),
+        ast.type ? astView(ast.type) : "*",
+        go(ast)
+      )
+      e.stopPropagation()
+    })
+    return el
+  }
+  return div(go(ast)).style({padding:".4em", border: "1px solid "+color.gray, borderRadius: ".4em", margin:".4em 0"})
+}
 
-  go = debugCall(go)
-  return go(ast, null)
+astView = debugCall(astView)
+
+type Neutral = Var | Prim | Tag<"Napp", {fn: Neutral, args: Value[]}>
+type Value = Tag<"function", {env: Env, vars: Var[], body: AST}> | Neutral
+type Env = Record<string, Value>
+
+const evaluate = (term:AST, env: Env): Value => {
+  switch (term.$) {
+    case "var": {
+      if (env[term.content.name]) return env[term.content.name]
+      return term
+    }
+    case "function": return mkAst("function", {...term.content, env}) 
+    case "app": return apply(
+      evaluate(term.content.fn, env),
+      term.content.args.map(arg => evaluate(arg, env))
+    )
+    case "let":
+      return evaluate(term.content.body, {...env, [term.content.var.content.name]: evaluate(term.content.value, env)})
+    case "number":
+    case "string": return term
+  }
+  throw new Error(`Cannot evaluate term of type ${term.$}`)
+}
+
+const apply = (fn: Value, args: Value[]): Value => {
+  if (fn.$ == "function"){
+
+    if (fn.content.vars.length != args.length) throw new Error(`Expected ${fn.content.vars.length} arguments, got ${args.length}`)
+    let env = {...fn.content.env}
+    fn.content.vars.forEach((v,i)=> env[v.content.name] = args[i])
+    return evaluate(fn.content.body, env)
+  }
+  return mkAst("Napp", {fn, args})
+}
+
+let counter = 0;
+
+const readback = (val: Value): AST => {
+  if (val.$ == "function")
+    return mkfun(val.content.vars, readback(apply(val, val.content.vars)))
+  if (val.$ == "Napp") return mkapp(readback(val.content.fn), val.content.args.map(readback))
+  return val
 }
 
 
-// let F = (x:number, y:string) => x
-// type arg = typeof F extends (...args: infer A) => any ? A : never
-
+export const run = (ast: AST) => readback(evaluate(ast, {}))
 
 DEBUG = 1
 
-
 let ast = parse('(fn x => fn y => x 3)').ast
-let res = run(ast!)
 
+let res = run(ast)
 
 
 DEBUG = 0
-
-
-// let samples = [
-//   "22 | number | 22",
-//   'let x = 22 in x | number | 22',
-//   'let (number x) = 22 in x | number | 22',
-//   'fn x => x | fn x0 => fn x => (typeof x)',
-//   '(number 22) | number | 22',
-//   'fn (number x) => x | fn x0 => fn (number x) => number | fn (number x) => x',
-//   'fn x => (number x) | fn x0 => fn (number x) => number',
-//   '(fn x => x 22) | number',
-//   '(fn (number x) => x 22) | number',
-//   '(fn (string x) => x 22) | error',
-//   'let id = fn x => x in fn y => (id y) | fn x0 => fn y => (typeof y) | fn y => y',
-//   'fn (number x) => (string x) | error',
-//   'fn x => fn y => y | fn x0 => fn x => fn x0 => fn y => (typeof y)',
-//   'fn x => fn y => x | fn x0 => fn x => fn x0 => fn y => (typeof x)',
-//   '(fn x=> fn y => x 3) | fn x0 => fn y => number',
-//   '((fn x=> fn y=> x 3) 2) | number | 3'
-
-// ].map(code => code.split("|").map(s => s.trim()))
-
-
-// let results = table().style({
-//   width: "100%",
-//   whiteSpace: "pre",
-// })
-
-
-
-
-// for (let [code, expectedType, expectedResult] of samples){
-
-//   let ast = parse(code)
-//   let res : AST | undefined = undefined
-
-//   let errmessage: string = ""
-//   try{ res = run(ast.ast)
-//   } catch(e) {
-//     errmessage = String(e)
-//     if (expectedType != "error") console.error(`Error running code: ${code}\n`, e)
-//   }
-
-//   let typeStr = res ? res.type ? prettyAST(res.type) : "no type" : "error"
-//   let resStr = res ? prettyAST(res) : "error"
-//   let check = (typeStr == (expectedType ?? typeStr) && resStr == (expectedResult ?? resStr))
-
-//   typeStr = typeStr == "error" ? errmessage : typeStr
-//   resStr = resStr == "error" ? errmessage : resStr
-
-//   if (!check) {
-//     results.append(
-//       tr(
-//         td(code),
-//         td(typeStr).style({color: typeStr == (expectedType ?? typeStr) ? "green" : "red", padding: "0 8px"}),
-//         td(resStr).style({color: resStr == (expectedResult ?? resStr) ? "green" : "red"})
-//       )
-//       .style({borderBottom: "1px solid "+color.color,})
-//     )
-//     body.append(div(results)
-//     .style({
-//       position: "absolute",
-//       border: "1px solid "+color.color,
-//       padding: "16px",
-//       backgroundColor: color.background,
-//     }))
-//   }
-// }    
-
-
-
