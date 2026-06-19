@@ -16,7 +16,7 @@ export let ANY : AST = mkvar("any")
 
 let primitiveType = (name: string) => ({
   type: TYPE,
-  impl: (x: AST) => {
+  impl: (x: Value) => {
     if (x.type) {
       if (x.type.$ == "var" && x.type.content.name == name) return x
       throw new Error(`Type error: expected ${name}, got ${(x.type)}`)
@@ -26,11 +26,10 @@ let primitiveType = (name: string) => ({
   }
 })
 
-
 const builtinKeys = ["number", "string", "eq", "add", "ifelse", "typeof"] as const
 type BuiltinKey = typeof builtinKeys[number]
 
-let builtins: Record<BuiltinKey, { type: AST, impl: (...args:AST[]) => AST }> = {
+let builtins: Record<BuiltinKey, { type: AST, impl: (...args:Value[]) => Value }> = {
   number: primitiveType("number"),
   string: primitiveType("string"),
   eq: {
@@ -56,14 +55,12 @@ let builtins: Record<BuiltinKey, { type: AST, impl: (...args:AST[]) => AST }> = 
   },
   typeof: {
     type: parse("fn f => fn x => type").ast!,
-    impl: (x) => {
-      if (!x.type) return mkapp(TYPEOF, [x])
-      return x.type
+    impl: (x : Value) : Value => {
+      if (!x.type) return mkAst("app", {fn: TYPEOF, args: [x]})
+      return evaluate(x.type, {})
     }
   }
 }
-
-
 
 let DEBUG = 0
 let loggerPre = pre()
@@ -109,7 +106,10 @@ let astView = (ast: AST | Value): NODE => {
       case "number":
       case "string": return el.append(String(ast.content)).style({color: color.blue})  
       case "var": return el.append(ast.content.name)
-      case "function": return el.append( "fn (",...ast.content.vars.map(go),") => ").append(go(ast.content.body))
+      case "function": return el.append( "fn ",...ast.content.vars.map(x=>{
+        if (x.type) return go(mkapp(x.type, [x]))
+        return go(x)
+      })," => ").append(go(ast.content.body))
       case "app": return el.append("(", go(ast.content.fn), " ", ...ast.content.args.map(arg=>go(arg)), ")")
       case "let": return el.append("let ", ast.content.var.content.name, " = ", go(ast.content.value), " in ", go(ast.content.body))
       default: return el.append(`[${ast.$}]`)
@@ -138,57 +138,59 @@ const hasShownType = (v: Var) => v.type && !(v.type.$ === "var" && v.type.conten
 const prettyBinder = (v: Var): string => hasShownType(v) ? `(${prettyAST(v.type!)} ${v.content.name})` : v.content.name
 
 
-export const prettyAST = (node: AST | Value): string =>{
+export const prettyAST = (node: AST): string =>{
   switch(node.$){
     case "number" : return node.content.toString()
     case "string" : return JSON.stringify(node.content)
     case "var": return node.content.name
     case "let": return `let ${prettyBinder(node.content.var)} = ${prettyAST(node.content.value)} in\n${prettyAST(node.content.body)}`
     case "function": return `fn ${node.content.vars.map(prettyBinder).join(" ")} => ${prettyAST(node.content.body)}`
-    case "Napp":
     case "app": return `(${prettyAST(node.content.fn)} ${node.content.args.map(prettyAST).join(" ")})`
     case "record": return `{${node.content.map(([k, v]) => `${k.content.name}: ${prettyAST(v)}`).join(", ")}}`
     case "error": return `[ERROR: ${node.content.message}]`
   }
 }
 
-
-// astView = debugCall(astView)
-
-type Neutral = Var | Prim | Tag<"Napp", {fn: Neutral, args: Value[]}>
+type Neutral = Var | Prim | Tag<"app", {fn: Neutral, args: Value[]}>
 type Value = Tag<"function", {env: Env, vars: Var[], body: AST}> | Neutral
 type Env = Record<string, {binder: Var, val:Value}>
 
-let annot = (term:Value, type: AST | undefined) :Value => {
+let annot =  <T extends Value | AST> (term:T, type: AST | undefined) :T => {
   if (type === undefined) return term
   if (term.type !== undefined && prettyAST(term.type) !== prettyAST(type)) throw new Error(`Expected ${prettyAST(type)}, got ${prettyAST(term.type)}`)
-  term.type == type
+  term.type = type
   return term
 }
 
-annot = debugCall(annot)
+let evaluate = (term:AST, env: Env = {}):Value => {
 
-let evaluate = (term:AST, env: Env): Value => {
-  switch (term.$) {
-    case "var": {
-      if (env[term.content.name]) return env[term.content.name].val
-      return term
+  let go = (term:AST, env: Env): Value => {
+    switch (term.$) {
+      case "var": {
+        if (env[term.content.name]) return env[term.content.name].val
+        return term
+      }
+      case "function": return mkAst("function", {...term.content, env}) 
+      case "app": return apply(
+        evaluate(term.content.fn, env),
+        term.content.args.map(arg => evaluate(arg, env))
+      )
+      case "let":{
+        let val = evaluate(term.content.value, env);
+        annot(term.content.var, val.type)
+        return evaluate(term.content.body, {...env, [term.content.var.content.name]: {binder: term.content.var, val,}})
+      }
+      case "number": return annot(term, NUMBER)
+      case "string": return term
     }
-    case "function": return mkAst("function", {...term.content, env}) 
-    case "app": return apply(
-      evaluate(term.content.fn, env),
-      term.content.args.map(arg => evaluate(arg, env))
-    )
-    case "let":{
-      let val = evaluate(term.content.value, env);
-      debug("VAL:",val, val.type, "\n")
-      annot(term.content.var, val.type)
-      return evaluate(term.content.body, {...env, [term.content.var.content.name]: {binder: term.content.var, val,}})
-    }
-    case "number": return annot(term, NUMBER)
-    case "string": return term
+    throw new Error(`Cannot evaluate term of type ${term.$}`)
   }
-  throw new Error(`Cannot evaluate term of type ${term.$}`)
+
+  let res = go(term, env)
+  annot(term, res.type)
+  return res
+
+
 }
 evaluate = debugCall(evaluate)
 
@@ -199,20 +201,26 @@ const apply = (fn: Value, args: Value[]): Value => {
     fn.content.vars.forEach((binder,i)=> env[binder.content.name] = { binder, val: args[i]})
     return evaluate(fn.content.body, env)
   }
-  return mkAst("Napp", {fn, args})
+  
+  if (fn.$ == "var"){
+    let name = fn.content.name
+    if (builtins[name as BuiltinKey]) return builtins[name as BuiltinKey].impl(...args)
+  }
+  return mkAst("app", {fn, args})
 }
 
 let counter = 0;
 
-const readback = (val: Value): AST => {
+let readback = (val: Value): AST => {
   if (val.$ == "function"){
-    let vars = val.content.vars.map(x=> mkvar(x.content.name + "_" + counter++))
+    let vars = val.content.vars.map(x=> annot(mkvar(x.content.name + "_" + counter++), x.type))
     return mkfun(vars, readback(apply(val, vars)))
   }
-  if (val.$ == "Napp") return mkapp(readback(val.content.fn), val.content.args.map(readback))
+  if (val.$ == "app") return mkapp(readback(val.content.fn), val.content.args.map(readback))
   return val
 }
 
+readback = debugCall(readback)
 
 export const run = (ast: AST) => {
   counter =0
@@ -222,18 +230,9 @@ export const run = (ast: AST) => {
 DEBUG = 1
 
 {
-  let ast = evaluate(parse("2").ast, {})
-
-  ast.type = NUMBER
-
-  debug(ast, ast.type)
+  let ast = run(parse("fn (number x)=> x").ast)
 
 }
 
-
-
-// let ast = parse('let u = 2 in (fn x => fn y => x 3)').ast
-// let res = run(ast)
-// console.log(res)
 
 DEBUG = 0
