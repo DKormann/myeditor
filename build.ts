@@ -19,10 +19,9 @@ setInterval(async () => {
       stderr: "pipe"
     }).stderr.text().then(err=>{builderr = err})
     version ++
-    console.log("built version: ", version)
   }
 
-}, 100)
+}, 200)
 
 
 

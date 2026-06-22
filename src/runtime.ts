@@ -1,6 +1,6 @@
 import { colorOf } from "./editor"
 import { body, color, div, NODE, pre, span } from "./html"
-import {mknum, Prim, Tag, type AST, type Func, parse, mkvar, mkapp, Var, mkAst, mkfun} from "./parser"
+import {mknum, Prim, Tag, type AST, type Func, parse, mkvar, mkapp, Var, mkAst, mkfun, ErrorNode} from "./parser"
 
 export let NUMBER = mkvar("number")
 export let STRING = mkvar("string")
@@ -26,12 +26,27 @@ let primitiveType = (name: string) => ({
   }
 })
 
-const builtinKeys = ["number", "string", "eq", "add", "ifelse", "typeof"] as const
+
+
+const builtinKeys = ["number", "string", "eq", "add", "ifelse", "typeof", "type"] as const
 type BuiltinKey = typeof builtinKeys[number]
 
 let builtins: Record<BuiltinKey, { type: AST, impl: (...args:Value[]) => Value }> = {
   number: primitiveType("number"),
   string: primitiveType("string"),
+  "type": {
+    type: TYPE,
+    impl: (x: Value) => {
+      if (x.type == TYPE) return x
+      if (x == NUMBER || x == STRING) return x
+      if (x.$ != "function") throw new Error(`Type error: expected a type, got ${prettyAST(x)}`)
+      let {vars, body} = x.content
+      if (vars.length != 1) throw new Error(`Expected function Type with 1 argument, got ${vars.length}`)
+      if (body.$ != "function") throw new Error(`Expected function Type, got ${body.$}`)
+      return x
+    }
+
+  },
   eq: {
     type: parse("fn f => fn x y => (number (f x y))").ast!,
     impl: (x,y) => mknum(
@@ -54,7 +69,7 @@ let builtins: Record<BuiltinKey, { type: AST, impl: (...args:Value[]) => Value }
     }
   },
   typeof: {
-    type: parse("fn f => fn x => type").ast!,
+    type: parse("fn f => fn x => (type (f x))").ast!,
     impl: (x : Value) : Value => {
       if (!x.type) return mkAst("app", {fn: TYPEOF, args: [x]})
       return evaluate(x.type, {})
@@ -151,7 +166,7 @@ export const prettyAST = (node: AST): string =>{
   }
 }
 
-type Neutral = Var | Prim | Tag<"app", {fn: Neutral, args: Value[]}>
+type Neutral = Var | Prim | Tag<"app", {fn: Neutral, args: Value[]}> | ErrorNode
 type Value = Tag<"function", {env: Env, vars: Var[], body: AST}> | Neutral
 type Env = Record<string, {binder: Var, val:Value}>
 
@@ -162,6 +177,9 @@ let annot =  <T extends Value | AST> (term:T, type: AST | undefined) :T => {
   return term
 }
 
+
+
+
 let evaluate = (term:AST, env: Env = {}):Value => {
 
   let go = (term:AST, env: Env): Value => {
@@ -170,13 +188,25 @@ let evaluate = (term:AST, env: Env = {}):Value => {
         if (env[term.content.name]) return env[term.content.name].val
         return term
       }
-      case "function": return mkAst("function", {...term.content, env}) 
+      case "function": return mkAst("function", {
+        vars: term.content.vars,
+        body: term.content.body,
+        env
+      }) 
       case "app": return apply(
         evaluate(term.content.fn, env),
         term.content.args.map(arg => evaluate(arg, env))
       )
       case "let":{
-        let val = evaluate(term.content.value, env);
+        let val: Value;
+        try{
+          val = evaluate(term.content.value, env);
+        }catch(e){
+          val = mkAst("error", {message: e instanceof Error ? e.message : String(e), content: ""})
+          val.span = term.content.value.span
+          term.content.value = val
+          return evaluate(term.content.body, env)
+        }
         annot(term.content.var, val.type)
         return evaluate(term.content.body, {...env, [term.content.var.content.name]: {binder: term.content.var, val,}})
       }
@@ -206,7 +236,9 @@ const apply = (fn: Value, args: Value[]): Value => {
     let name = fn.content.name
     if (builtins[name as BuiltinKey]) return builtins[name as BuiltinKey].impl(...args)
   }
-  return mkAst("app", {fn, args})
+
+  let res : Value = mkAst("app", {fn, args})
+  return res
 }
 
 let counter = 0;
@@ -227,12 +259,3 @@ export const run = (ast: AST) => {
   return readback(evaluate(ast, {}))
 }
 
-DEBUG = 1
-
-{
-  let ast = run(parse("fn (number x)=> x").ast)
-
-}
-
-
-DEBUG = 0

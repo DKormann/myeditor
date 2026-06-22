@@ -24,7 +24,7 @@ export type AST =
   | ErrorNode
 
 export type SyntaxNode = AST | Comment
-export type ParseResult = {ast: AST, comments: Comment[], astmap: (SyntaxNode | undefined)[]}
+export type ParseResult = {ast: AST, comments: Comment[]}
 
 
 
@@ -407,6 +407,7 @@ class Parser {
 }
 
 export const buildAstMap = (ast: AST, comments: Comment[] = []): (SyntaxNode | undefined)[] => {
+  console.log(ast)
   let maxEnd = comments.reduce((m, c) => c.span.end.offset > m ? c.span.end.offset : m, ast.span.end.offset)
   let res: (SyntaxNode | undefined)[] = Array.from({length: maxEnd}, ()=>undefined)
   const walk = (node: AST) => {
@@ -423,7 +424,7 @@ export const buildAstMap = (ast: AST, comments: Comment[] = []): (SyntaxNode | u
 export const parse = (code:string): ParseResult => {
   let {tokens, comments, eof} = tokenize(code)
   let ast = new Parser(tokens, code, eof).parse()
-  return {ast, comments, astmap: buildAstMap(ast, comments)}
+  return {ast, comments}
 }
 
 export const parseAST = (code:string): AST => parse(code).ast

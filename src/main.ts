@@ -4,7 +4,7 @@
 
 import { body, html, span , fromHTML, h2, div} from "./html";
 import { editor } from "./editor";
-import { parse, type AST, type Span, type SyntaxNode } from "./parser";
+import { buildAstMap, parse, type AST, type Span, type SyntaxNode } from "./parser";
 import { getdef } from "./lsp"
 import { ANY, prettyAST, run } from "./runtime"
 import { color } from "./html";
@@ -70,9 +70,12 @@ let Edit = editor(
 
       let parsed = parse(code)
       ast = parsed.ast
-      currentAstMap = parsed.astmap
       code = code
+      
       let res = run(ast)
+
+      currentAstMap = buildAstMap(ast, parsed.comments)
+
       outview.el.textContent = prettyAST(res)
       localStorage.setItem("lines", code)
 
@@ -96,7 +99,7 @@ let Edit = editor(
     let ast:AST = node.type ? node.type : ANY
 
     let co = prettyAST(ast)
-    map.push(...parse(co).astmap)
+    // map.push(...parse(co).astmap)
     str += co
 
     return [str, map]
