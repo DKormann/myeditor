@@ -1,6 +1,6 @@
 import { colorOf } from "./editor"
 import { body, color, div, NODE, pre, span } from "./html"
-import {mknum, Prim, Tag, type AST, type Func, parse, mkvar, mkapp, Var, mkAst, mkfun, ErrorNode} from "./parser"
+import {mknum, Prim, Tag, type AST, type Func, parse, mkvar, mkapp, Var, mkAst, mkfun, ErrorNode, prettyAST} from "./parser"
 
 export let NUMBER = mkvar("number")
 export let STRING = mkvar("string")
@@ -149,22 +149,7 @@ let astView = (ast: AST | Value): NODE => {
   return div(go(ast)).style({padding:".4em", border: "1px solid "+color.gray, borderRadius: ".4em", margin:".4em 0"})
 }
 
-const hasShownType = (v: Var) => v.type && !(v.type.$ === "var" && v.type.content.name === "any")
-const prettyBinder = (v: Var): string => hasShownType(v) ? `(${prettyAST(v.type!)} ${v.content.name})` : v.content.name
 
-
-export const prettyAST = (node: AST): string =>{
-  switch(node.$){
-    case "number" : return node.content.toString()
-    case "string" : return JSON.stringify(node.content)
-    case "var": return node.content.name
-    case "let": return `let ${prettyBinder(node.content.var)} = ${prettyAST(node.content.value)} in\n${prettyAST(node.content.body)}`
-    case "function": return `fn ${node.content.vars.map(prettyBinder).join(" ")} => ${prettyAST(node.content.body)}`
-    case "app": return `(${prettyAST(node.content.fn)} ${node.content.args.map(prettyAST).join(" ")})`
-    case "record": return `{${node.content.map(([k, v]) => `${k.content.name}: ${prettyAST(v)}`).join(", ")}}`
-    case "error": return `[ERROR: ${node.content.message}]`
-  }
-}
 
 type Neutral = Var | Prim | Tag<"app", {fn: Neutral, args: Value[]}> | ErrorNode
 type Value = Tag<"function", {env: Env, vars: Var[], body: AST}> | Neutral
@@ -184,6 +169,7 @@ let evaluate = (term:AST, env: Env = {}):Value => {
 
   let go = (term:AST, env: Env): Value => {
     switch (term.$) {
+      case "error": return term
       case "var": {
         if (env[term.content.name]) return env[term.content.name].val
         return term
@@ -202,6 +188,7 @@ let evaluate = (term:AST, env: Env = {}):Value => {
         try{
           val = evaluate(term.content.value, env);
         }catch(e){
+          console.error(e)
           val = mkAst("error", {message: e instanceof Error ? e.message : String(e), content: ""})
           val.span = term.content.value.span
           term.content.value = val

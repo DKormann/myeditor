@@ -4,9 +4,9 @@
 
 import { body, html, span , fromHTML, h2, div} from "./html";
 import { editor } from "./editor";
-import { buildAstMap, parse, type AST, type Span, type SyntaxNode } from "./parser";
+import { buildAstMap, parse, type AST, type Span, type SyntaxNode, prettyAST} from "./parser";
 import { getdef } from "./lsp"
-import { ANY, prettyAST, run } from "./runtime"
+import { ANY, run } from "./runtime"
 import { color } from "./html";
 
 
@@ -82,6 +82,7 @@ let Edit = editor(
     }catch(e){
       ast = undefined
       currentAstMap = []
+      console.error(e)
       outview.el.textContent = e instanceof Error ? e.message : String(e)
     }
   },
